@@ -1371,3 +1371,262 @@ COMMIT / ROLLBACK
 Jalankan empat command checkpoint di atas dan kirim output-nya.
 
 ---
+
+# Password hash
+
+Lanjut. Kita anggap STEP 07 sudah GREEN sesuai checkpoint terakhir. Sekarang masuk:
+
+STEP 08 — Authentication Foundation
+
+Kita belum membuat JWT dan belum membuat HTTP handler login.
+
+Urutan yang lebih aman:
+
+STEP 08
+Authentication Foundation
+│
+├── Domain auth errors
+├── Password hashing
+├── Password verification
+├── Auth service contract
+└── Test
+↓
+STEP 09
+Login + session creation
+↓
+STEP 10
+Access/refresh token
+
+Untuk sekarang fokus pertama: password hashing.
+
+08.1 — Prinsip password
+
+Database kita sudah mempunyai:
+
+users.password_hash
+
+Yang disimpan bukan password asli.
+
+Flow:
+
+Register
+│
+▼
+plain password
+│
+▼
+password hasher
+│
+▼
+password_hash
+│
+▼
+PostgreSQL
+
+Login
+│
+▼
+plain password
+│
+▼
+compare dengan password_hash
+│
+├── valid → lanjut
+└── invalid → authentication error
+
+Kita tidak akan menggunakan:
+
+SHA256(password)
+MD5(password)
+SHA1(password)
+
+untuk password storage.
+
+Gunakan Argon2id.
+
+08.2 — Buat package password
+
+Buat directory:
+
+mkdir -p internal/security/password
+
+Struktur:
+
+internal/
+└── security/
+└── password/
+├── hasher.go
+└── hasher_test.go
+
+08.3 — Password hasher interface
+
+Buat:
+
+internal/security/password/hasher.go
+
+Isi:
+
+package password
+
+import (
+"fmt"
+
+    "golang.org/x/crypto/argon2"
+
+)
+
+const (
+saltLength = 16
+
+    timeCost    = 3
+    memoryCost  = 64 * 1024
+    parallelism = 2
+    keyLength   = 32
+
+)
+
+type Hasher struct{}
+
+func NewHasher() \*Hasher {
+return &Hasher{}
+}
+
+func (h \*Hasher) Hash(password string) (string, error) {
+if password == "" {
+return "", fmt.Errorf("password cannot be empty")
+}
+
+    salt := make([]byte, saltLength)
+
+    // Kita akan menggunakan crypto/rand untuk salt.
+    // Implementasi lengkapnya kita buat setelah dependency siap.
+    _ = salt
+
+    return "", nil
+
+}
+
+func (h \*Hasher) Compare(password, encodedHash string) error {
+return nil
+}
+
+func deriveKey(password string, salt []byte) []byte {
+return argon2.IDKey(
+[]byte(password),
+salt,
+timeCost,
+memoryCost,
+parallelism,
+keyLength,
+)
+}
+
+Tapi jangan jalankan test dulu.
+
+Saya sengaja belum memberikan implementation final di bagian Hash/Compare, karena kita perlu menetapkan format encoded hash terlebih dahulu.
+
+Kita akan menggunakan format yang eksplisit:
+
+$argon2id$v=19$m=65536,t=3,p=2$<salt>$<key>
+
+Kenapa?
+
+Karena parameter Argon2 harus ikut tersimpan bersama hash. Dengan begitu kalau parameter security berubah di masa depan, hash lama masih dapat diverifikasi.
+
+08.4 — Dependency
+
+Jalankan:
+
+go get golang.org/x/crypto
+
+Lalu:
+
+go mod tidy
+
+Setelah itu cek:
+
+go list -m golang.org/x/crypto
+
+Kita tidak perlu mem-pin versi secara manual; go get akan memilih versi yang kompatibel dengan Go toolchain project kamu.
+
+08.5 — Jangan gunakan password langsung di repository
+
+Ada boundary penting di sini:
+
+AuthService
+│
+│ plain password
+▼
+Password Hasher
+│
+│ encoded hash
+▼
+UserRepository
+│
+▼
+PostgreSQL
+
+Repository hanya menerima:
+
+PasswordHash
+
+dan tidak mengetahui bagaimana password dibuat.
+
+Jadi nanti:
+
+hash, err := passwordHasher.Hash(input.Password)
+
+kemudian:
+
+userRepo.CreateUser(... PasswordHash: hash)
+
+Repository tidak boleh melakukan:
+
+hashPassword(...)
+
+sendiri.
+
+08.6 — Security rules
+
+Untuk package ini kita akan enforce:
+
+password kosong → error
+password tidak pernah ditulis ke log
+salt random menggunakan crypto/rand
+Argon2id digunakan untuk derivation
+salt berbeda menghasilkan hash berbeda
+hash dapat diverifikasi
+password salah harus gagal
+malformed encoded hash harus gagal dengan aman
+tidak ada plaintext password yang disimpan
+
+Kita juga tidak akan membuat error yang membocorkan detail internal hash parsing kepada user. Detail tersebut bisa masuk internal error/log bila diperlukan, tetapi API authentication nantinya cukup menghasilkan error generik.
+
+08.7 — Test yang akan kita targetkan
+
+hasher_test.go nantinya minimal membuktikan:
+
+Hash
+├── menghasilkan hash
+├── hash != plaintext
+├── dua hash password sama != satu sama lain
+└── hash dapat di-verify
+
+Compare
+├── password benar → success
+├── password salah → error
+└── hash corrupt → error
+
+Kita juga akan memastikan test tidak bergantung pada exact salt/hash, karena salt memang random.
+
+Stop checkpoint di sini
+
+Untuk langkah berikutnya, jalankan dulu:
+
+go get golang.org/x/crypto
+go mod tidy
+go list -m golang.org/x/crypto
+
+Kirim hasil go list -m golang.org/x/crypto.
+
+Setelah itu kita implementasikan Argon2id encoded hash secara lengkap + unit test, baru lanjut ke AuthService.
