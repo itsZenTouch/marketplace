@@ -21,3 +21,37 @@ Copy environment configuration:
 ```bash
 cp .env.example .env
 ```
+
+## Database
+
+Development database:
+
+- PostgreSQL
+- Goose migrations
+- sqlc generated queries
+
+Run migrations:
+
+```bash
+goose -dir migrations postgres "$DATABASE_URL" up
+```
+
+Rollback the latest migration:
+
+```bash
+goose -dir migrations postgres "$DATABASE_URL" down
+```
+
+Check migration status:
+
+```bash
+goose -dir migrations postgres "$DATABASE_URL" status
+```
+
+# 36. Checkpoint database
+
+Sekarang jalankan:
+
+```bash
+gofmt -w ./cmd ./internal
+```
