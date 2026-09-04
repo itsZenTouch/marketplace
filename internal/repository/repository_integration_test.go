@@ -88,7 +88,7 @@ func TestRepositoryTransaction(t *testing.T) {
 
 		expectedErr := context.Canceled
 
-		err := repo.WithTx(ctx, func(q *db.Queries) error {
+		err := repo.RepoWithTx(ctx, func(q *db.Queries) error {
 			_, err := q.CreateUser(ctx, db.CreateUserParams{
 				ID:           userID,
 				Email:        email,
