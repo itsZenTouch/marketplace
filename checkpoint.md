@@ -1,0 +1,1373 @@
+Bagus. Berarti checkpoint kita sekarang:
+
+STEP 01 ✅ Project bootstrap
+STEP 02 ✅ Configuration
+STEP 03 ✅ PostgreSQL + pgxpool
+STEP 04 ✅ Goose migrations
+
+Sekarang kita masuk STEP 05 — sqlc v1.31.1.
+
+Fokus tahap ini adalah membuat alur:
+
+PostgreSQL
+↓
+SQL schema
+↓
+SQL queries
+↓
+sqlc generate
+↓
+Type-safe Go code
+↓
+pgxpool
+
+Kita tidak menggunakan ORM.
+
+STEP 05 — sqlc v1.31.1
+
+1. Pastikan sqlc
+
+Jalankan:
+
+sqlc version
+
+Target:
+
+v1.31.1
+
+Jika binary belum tersedia, instal versi yang kita sepakati:
+
+go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+
+Lalu:
+
+sqlc version
+
+2. Prinsip struktur sqlc kita
+
+Ada satu hal penting sebelum membuat file.
+
+Kita tidak akan membuat sqlc membaca migration directory secara langsung sebagai satu-satunya source of truth.
+
+Kita akan memisahkan:
+
+migrations/
+↓
+database schema evolution
+
+sql/
+├── schema/
+│ └── ...
+│
+└── queries/
+└── ...
+↓
+sqlc
+↓
+internal/repository/db/
+
+Namun schema sqlc harus tetap konsisten dengan database.
+
+Untuk tahap awal, kita bisa menggunakan migration SQL sebagai input schema jika tooling/workflow kita memungkinkan. Tetapi saya lebih menyarankan pola yang eksplisit:
+
+migrations/
+│
+│ authoritative database history
+▼
+PostgreSQL
+
+sql/schema/
+│
+│ sqlc schema input
+▼
+sqlc
+
+Nanti kita disiplinkan agar keduanya tidak divergen.
+
+3. Buat struktur directory
+
+Jalankan:
+
+mkdir -p sql/schema
+mkdir -p sql/queries
+mkdir -p internal/repository/db
+
+Struktur:
+
+marketplace/
+├── internal/
+│ ├── config/
+│ ├── platform/
+│ │ └── database/
+│ └── repository/
+│ └── db/
+│
+├── migrations/
+│
+└── sql/
+├── schema/
+└── queries/
+
+4. Buat schema untuk sqlc
+
+Buat:
+
+sql/schema/001_users.sql
+
+Isi:
+
+Writing
+CREATE TABLE users (
+id UUID PRIMARY KEY,
+
+    email TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+
+    status TEXT NOT NULL DEFAULT 'active',
+
+    email_verified_at TIMESTAMPTZ,
+
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT users_email_unique
+        UNIQUE (email),
+
+    CONSTRAINT users_status_check
+        CHECK (
+            status IN (
+                'active',
+                'suspended',
+                'disabled'
+            )
+        ),
+
+    CONSTRAINT users_failed_login_attempts_check
+        CHECK (failed_login_attempts >= 0)
+
+);
+
+Kemudian:
+
+sql/schema/002_auth_sessions.sql
+
+Writing
+CREATE TABLE auth_sessions (
+id UUID PRIMARY KEY,
+
+    user_id UUID NOT NULL,
+
+    refresh_token_hash TEXT NOT NULL,
+
+    user_agent TEXT,
+    ip_address INET,
+
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT auth_sessions_user_fk
+        FOREIGN KEY (user_id)
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+
+    CONSTRAINT auth_sessions_expiry_check
+        CHECK (expires_at > created_at)
+
+);
+
+CREATE INDEX idx_auth_sessions_user_id
+ON auth_sessions(user_id);
+
+CREATE INDEX idx_auth_sessions_expires_at
+ON auth_sessions(expires_at);
+
+Perhatikan: file schema ini tidak memiliki -- +goose Up/Down.
+
+Ini adalah input schema untuk sqlc, bukan migration.
+
+5. Buat sqlc configuration
+
+Buat di root:
+
+sqlc.yaml
+
+Isi:
+
+Writing
+version: "2"
+
+sql:
+
+- engine: "postgresql"
+  queries: "sql/queries"
+  schema: "sql/schema"
+  gen:
+  go:
+  package: "db"
+  out: "internal/repository/db"
+  sql_package: "pgx/v5"
+
+      emit_json_tags: true
+      emit_empty_slices: true
+      emit_pointers_for_null_types: true
+      emit_interface: false
+
+      overrides:
+        - db_type: "uuid"
+          go_type:
+            import: "github.com/google/uuid"
+            type: "UUID"
+
+6. Kenapa sql_package: pgx/v5?
+
+Karena stack kita:
+
+pgx/v5
+pgxpool
+
+Jadi generated code akan menggunakan:
+
+github.com/jackc/pgx/v5
+
+bukan database/sql.
+
+Ini penting agar seluruh database layer konsisten.
+
+7. Kenapa UUID menjadi google/uuid?
+
+Database:
+
+id UUID
+
+Go:
+
+uuid.UUID
+
+Dengan:
+
+github.com/google/uuid
+
+Jadi kita tidak perlu membawa UUID sebagai:
+
+string
+
+di seluruh application layer.
+
+Ini mengurangi kemungkinan ID invalid masuk terlalu jauh ke sistem.
+
+8. Query pertama — Create User
+
+Buat:
+
+sql/queries/users.sql
+
+Isi:
+
+Writing
+-- name: CreateUser :one
+INSERT INTO users (
+id,
+email,
+password_hash,
+status
+)
+VALUES (
+$1,
+$2,
+$3,
+$4
+)
+RETURNING
+id,
+email,
+password_hash,
+status,
+email_verified_at,
+failed_login_attempts,
+locked_until,
+created_at,
+updated_at;
+
+Perhatikan:
+
+-- name: CreateUser :one
+
+Ini instruksi sqlc.
+
+Artinya:
+
+CreateUser
+↓
+1 row
+
+9. Query get user by ID
+
+Tambahkan:
+
+Writing
+-- name: GetUserByID :one
+SELECT
+id,
+email,
+password_hash,
+status,
+email_verified_at,
+failed_login_attempts,
+locked_until,
+created_at,
+updated_at
+FROM users
+WHERE id = $1
+LIMIT 1;
+
+10. Query get user by email
+
+Tambahkan:
+
+Writing
+-- name: GetUserByEmail :one
+SELECT
+id,
+email,
+password_hash,
+status,
+email_verified_at,
+failed_login_attempts,
+locked_until,
+created_at,
+updated_at
+FROM users
+WHERE email = $1
+LIMIT 1;
+
+Query ini akan sangat penting ketika login:
+
+email
+↓
+GetUserByEmail
+↓
+password hash
+↓
+verify password
+
+11. Update login failure
+
+Tambahkan:
+
+Writing
+-- name: IncrementFailedLoginAttempts :one
+UPDATE users
+SET
+failed_login_attempts = failed_login_attempts + 1,
+updated_at = NOW()
+WHERE id = $1
+RETURNING
+id,
+email,
+password_hash,
+status,
+email_verified_at,
+failed_login_attempts,
+locked_until,
+created_at,
+updated_at;
+
+12. Reset login failures
+
+Tambahkan:
+
+Writing
+-- name: ResetFailedLoginAttempts :one
+UPDATE users
+SET
+failed_login_attempts = 0,
+locked_until = NULL,
+updated_at = NOW()
+WHERE id = $1
+RETURNING
+id,
+email,
+password_hash,
+status,
+email_verified_at,
+failed_login_attempts,
+locked_until,
+created_at,
+updated_at;
+
+13. Query auth session
+
+Tambahkan ke sql/queries/auth_sessions.sql:
+
+Writing
+-- name: CreateAuthSession :one
+INSERT INTO auth_sessions (
+id,
+user_id,
+refresh_token_hash,
+user_agent,
+ip_address,
+expires_at
+)
+VALUES (
+$1,
+$2,
+$3,
+$4,
+$5,
+$6
+)
+RETURNING
+id,
+user_id,
+refresh_token_hash,
+user_agent,
+ip_address,
+expires_at,
+revoked_at,
+created_at,
+updated_at;
+
+14. Get session
+
+Tambahkan:
+
+Writing
+-- name: GetAuthSessionByID :one
+SELECT
+id,
+user_id,
+refresh_token_hash,
+user_agent,
+ip_address,
+expires_at,
+revoked_at,
+created_at,
+updated_at
+FROM auth_sessions
+WHERE id = $1
+LIMIT 1;
+
+15. Revoke session
+
+Tambahkan:
+
+Writing
+-- name: RevokeAuthSession :one
+UPDATE auth_sessions
+SET
+revoked_at = NOW(),
+updated_at = NOW()
+WHERE id = $1
+AND revoked_at IS NULL
+RETURNING
+id,
+user_id,
+refresh_token_hash,
+user_agent,
+ip_address,
+expires_at,
+revoked_at,
+created_at,
+updated_at;
+
+Perhatikan:
+
+AND revoked_at IS NULL
+
+Artinya session yang sudah revoked tidak "direvoke ulang".
+
+16. List sessions user
+
+Tambahkan:
+
+Writing
+-- name: ListAuthSessionsByUserID :many
+SELECT
+id,
+user_id,
+refresh_token_hash,
+user_agent,
+ip_address,
+expires_at,
+revoked_at,
+created_at,
+updated_at
+FROM auth_sessions
+WHERE user_id = $1
+ORDER BY created_at DESC;
+
+17. Generate code
+
+Sekarang:
+
+sqlc generate
+
+Kalau berhasil, lihat:
+
+find internal/repository/db -type f
+
+Anda akan mendapatkan file generated seperti:
+
+internal/repository/db/
+├── db.go
+├── models.go
+├── users.sql.go
+└── auth_sessions.sql.go
+
+Nama file dapat sedikit berbeda tergantung konfigurasi/versi, tetapi intinya generated Go code harus muncul.
+
+18. Jangan edit generated files
+
+Misalnya:
+
+internal/repository/db/users.sql.go
+
+Jangan edit manual.
+
+Jika ada perubahan:
+
+SQL
+↓
+sqlc generate
+↓
+generated code
+
+Bukan:
+
+generated code
+↓
+edit manual
+
+Karena generate berikutnya akan menghapus perubahan manual tersebut.
+
+19. Lihat generated model
+
+Buka:
+
+internal/repository/db/models.go
+
+Anda akan melihat kurang lebih:
+
+type User struct {
+ID uuid.UUID
+Email string
+PasswordHash string
+Status string
+EmailVerifiedAt pgtype.Timestamptz
+FailedLoginAttempts int32
+LockedUntil pgtype.Timestamptz
+CreatedAt pgtype.Timestamptz
+UpdatedAt pgtype.Timestamptz
+}
+
+Detail nullable type bisa berbeda sesuai konfigurasi sqlc/pgx.
+
+Hal yang penting:
+
+PostgreSQL UUID
+↓
+uuid.UUID
+
+PostgreSQL TEXT NOT NULL
+↓
+string
+
+PostgreSQL nullable timestamp
+↓
+nullable pgx type
+
+20. Generated Queries
+
+Sekarang lihat:
+
+internal/repository/db/users.sql.go
+
+Anda akan menemukan method semacam:
+
+func (q \*Queries) CreateUser(
+ctx context.Context,
+arg CreateUserParams,
+) (User, error)
+
+Dan:
+
+func (q \*Queries) GetUserByEmail(
+ctx context.Context,
+email string,
+) (User, error)
+
+Inilah manfaat utama sqlc:
+
+Kita menulis:
+
+SELECT ...
+
+tetapi mendapatkan:
+
+GetUserByEmail(...)
+
+dengan parameter dan return type yang compile-time checked.
+
+21. Hubungkan sqlc dengan pgxpool
+
+Generated db.go biasanya memiliki constructor yang menerima interface database executor.
+
+Secara konsep:
+
+pgxpool.Pool
+↓
+db.New(pool)
+↓
+db.Queries
+
+Kita akan menggunakan pola ini nanti:
+
+queries := db.New(pool)
+
+Kemudian:
+
+user, err := queries.GetUserByEmail(
+ctx,
+email,
+)
+
+Tidak perlu menulis:
+
+pool.QueryRow(...)
+
+berulang-ulang di service.
+
+22. Penting: jangan letakkan business logic di sqlc
+
+sqlc hanya database access.
+
+Bukan tempat untuk:
+
+password validation
+JWT
+permission
+seller rules
+order calculation
+payment rules
+
+Layer kita nantinya:
+
+HTTP Handler
+↓
+Service
+↓
+Repository / sqlc
+↓
+PostgreSQL
+
+Contoh login:
+
+POST /auth/login
+↓
+AuthHandler
+↓
+AuthService
+↓
+GetUserByEmail()
+↓
+verify password
+↓
+create session
+↓
+generate tokens
+↓
+response
+
+23. Test generated code
+
+Pertama:
+
+go test ./...
+
+Kemudian:
+
+go vet ./...
+
+Kemudian:
+
+go build ./cmd/api
+
+Kalau sqlc generated code benar, semuanya harus compile.
+
+24. Buat integration test sederhana
+
+Sekarang kita ingin membuktikan:
+
+Go
+↓
+sqlc
+↓
+pgxpool
+↓
+PostgreSQL
+
+Buat:
+
+internal/repository/db/db_integration_test.go
+
+Untuk sekarang kita buat test yang hanya berjalan ketika environment flag diberikan.
+
+Writing
+package db
+
+import (
+"context"
+"os"
+"testing"
+"time"
+
+    "github.com/google/uuid"
+    "github.com/jackc/pgx/v5/pgxpool"
+
+)
+
+func TestCreateAndGetUser(t \*testing.T) {
+if os.Getenv("RUN_DB_TESTS") != "1" {
+t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
+}
+
+    databaseURL := os.Getenv("DATABASE_URL")
+    if databaseURL == "" {
+    	t.Fatal("DATABASE_URL is required")
+    }
+
+    ctx, cancel := context.WithTimeout(
+    	context.Background(),
+    	5*time.Second,
+    )
+    defer cancel()
+
+    pool, err := pgxpool.New(
+    	ctx,
+    	databaseURL,
+    )
+    if err != nil {
+    	t.Fatalf("create pool: %v", err)
+    }
+    defer pool.Close()
+
+    if err := pool.Ping(ctx); err != nil {
+    	t.Fatalf("ping database: %v", err)
+    }
+
+    queries := New(pool)
+
+    userID := uuid.New()
+
+    user, err := queries.CreateUser(ctx, CreateUserParams{
+    	ID:           userID,
+    	Email:        "sqlc-test@example.com",
+    	PasswordHash: "test-hash",
+    	Status:       "active",
+    })
+    if err != nil {
+    	t.Fatalf("CreateUser: %v", err)
+    }
+
+    if user.ID != userID {
+    	t.Fatalf(
+    		"CreateUser ID = %v, want %v",
+    		user.ID,
+    		userID,
+    	)
+    }
+
+    got, err := queries.GetUserByID(ctx, userID)
+    if err != nil {
+    	t.Fatalf("GetUserByID: %v", err)
+    }
+
+    if got.Email != "sqlc-test@example.com" {
+    	t.Fatalf(
+    		"Email = %q, want %q",
+    		got.Email,
+    		"sqlc-test@example.com",
+    	)
+    }
+
+    _, err = pool.Exec(
+    	ctx,
+    	"DELETE FROM users WHERE id = $1",
+    	userID,
+    )
+    if err != nil {
+    	t.Fatalf("cleanup: %v", err)
+    }
+
+}
+
+25. Jalankan integration test
+
+Karena test ini menyentuh database, jangan jadikan default dulu.
+
+Jalankan:
+
+RUN_DB_TESTS=1 go test ./internal/repository/db
+
+Pada Linux/macOS:
+
+RUN_DB_TESTS=1 go test ./internal/repository/db
+
+Windows PowerShell:
+
+$env:RUN_DB_TESTS="1"
+go test ./internal/repository/db
+
+Expected:
+
+PASS
+
+Kemudian unset:
+
+PowerShell:
+
+Remove-Item Env:RUN_DB_TESTS
+
+26. Periksa data
+
+Setelah test selesai:
+
+psql "postgres://marketplace:marketplace@localhost:5432/marketplace?sslmode=disable"
+
+SELECT id, email, status
+FROM users;
+
+Seharusnya tidak ada:
+
+sqlc-test@example.com
+
+karena test melakukan cleanup.
+
+27. Masalah penting: schema duplication
+
+Sekarang kita punya:
+
+migrations/
+├── ...create_users.sql
+└── ...create_auth_sessions.sql
+
+sql/schema/
+├── 001_users.sql
+└── 002_auth_sessions.sql
+
+Ya, ada duplication.
+
+Untuk tahap awal ini disengaja supaya kita memahami dua konsep:
+
+migration history
+vs
+sqlc schema input
+
+Tetapi duplication berarti ada risiko:
+
+migration ≠ sqlc schema
+
+Dan kita tidak boleh membiarkan itu terjadi.
+
+Pada tahap berikutnya kita akan menetapkan workflow yang lebih ketat untuk menjaga schema source tetap sinkron.
+
+28. Tambahkan sqlc ke developer tooling
+
+Tambahkan ke README:
+
+Writing
+
+## SQLC
+
+Generate type-safe database code:
+
+````bash
+sqlc generate
+
+
+Generated code:
+
+internal/repository/db/
+
+
+Do not edit generated files manually.
+Update SQL queries/schema and run sqlc generate again.
+
+:::
+
+---
+
+# 29. Tambahkan `.gitignore`
+
+Pastikan:
+
+```gitignore
+.env
+
+
+ada di .gitignore.
+
+Tetapi generated sqlc code jangan di-ignore.
+
+Kita ingin:
+
+internal/repository/db/
+
+
+masuk Git.
+
+Alasannya supaya build/CI tidak membutuhkan sqlc binary untuk sekadar compile project.
+
+30. Jangan commit .env
+
+Periksa:
+
+git status
+
+
+.env seharusnya tidak muncul sebagai untracked file.
+
+Yang boleh masuk repository:
+
+.env.example
+
+
+Yang tidak boleh:
+
+.env
+
+31. Security checkpoint
+
+Pada tahap ini kita sudah memiliki beberapa defense:
+
+                    DATABASE
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+       FK           UNIQUE          CHECK
+        │              │              │
+        ▼              ▼              ▼
+ integrity       duplicate       invalid state
+
+
+Dan application layer:
+
+SQL
+ ↓
+sqlc
+ ↓
+typed Go
+ ↓
+compile-time checking
+
+
+Kita juga tidak menyimpan:
+
+refresh_token
+
+
+plaintext di database.
+
+Hanya:
+
+refresh_token_hash
+
+32. Checkpoint STEP 05
+
+Sekarang jalankan secara berurutan:
+
+sqlc version
+
+
+harus:
+
+v1.31.1
+
+
+Kemudian:
+
+sqlc generate
+
+
+Lalu:
+
+gofmt -w ./cmd ./internal
+
+
+Kemudian:
+
+go mod tidy
+
+
+Lalu:
+
+go test ./...
+
+
+Kemudian:
+
+go test -race ./...
+
+
+Lalu:
+
+go vet ./...
+
+
+Lalu:
+
+go build ./cmd/api
+
+
+Terakhir integration test:
+
+RUN_DB_TESTS=1 go test ./internal/repository/db
+
+Kondisi yang kita inginkan
+STEP 01  Bootstrap                 ✅
+STEP 02  Configuration             ✅
+STEP 03  PostgreSQL + pgxpool      ✅
+STEP 04  Goose                     ✅
+STEP 05  sqlc                      ⬅️ sekarang
+
+
+Dan dependency flow:
+
+                  ┌───────────────┐
+                  │   PostgreSQL  │
+                  └───────┬───────┘
+                          │
+             ┌────────────┴────────────┐
+             │                         │
+             ▼                         ▼
+       Goose migrations           sql/schema
+             │                         │
+             │                         ▼
+             │                       sqlc
+             │                         │
+             │                         ▼
+             │                generated Go types
+             │                         │
+             └────────────┬────────────┘
+                          ▼
+                       pgxpool
+                          │
+                          ▼
+                       Service
+
+
+Jangan masuk ke authentication service dulu. Setelah checkpoint STEP 05 hijau, tahap berikutnya sebaiknya kita buat STEP 06 — Repository & Transaction Boundary, karena sebelum JWT/password/session kita perlu menetapkan dengan benar bagaimana sqlc, pgxpool, transaction, repository interface, dan dependency injection bekerja. Ini akan menjadi fondasi agar business logic marketplace nantinya tidak langsung bergantung pada generated SQL code.
+````
+
+---
+
+# Repository Foundation & Transaction
+
+Sip. Module path kita sudah jelas:
+
+github.com/itsZenTouch/marketplace
+
+Kita lanjut STEP 06 secara konkret. Saya sarankan jangan membuat semua abstraction sekaligus; kita buat boundary yang kecil dulu, lalu compile.
+
+STEP 06.1 — Repository foundation
+
+Struktur target:
+
+internal/
+└── repository/
+├── db/ # generated sqlc — jangan edit
+├── repository.go
+├── interfaces.go
+├── user_repository.go
+└── transaction.go
+
+1. repository.go
+
+Buat:
+
+internal/repository/repository.go
+
+Isi:
+
+package repository
+
+import "github.com/jackc/pgx/v5/pgxpool"
+
+type Repository struct {
+pool \*pgxpool.Pool
+}
+
+func New(pool *pgxpool.Pool) *Repository {
+return &Repository{
+pool: pool,
+}
+}
+
+Ini menjadi root repository yang memegang pgxpool.Pool.
+
+2. interfaces.go
+
+Buat:
+
+internal/repository/interfaces.go
+
+Isi:
+
+package repository
+
+import (
+"context"
+
+    "github.com/google/uuid"
+
+    "github.com/itsZenTouch/marketplace/internal/repository/db"
+
+)
+
+type UserRepository interface {
+CreateUser(
+ctx context.Context,
+arg db.CreateUserParams,
+) (db.User, error)
+
+    GetUserByID(
+    	ctx context.Context,
+    	id uuid.UUID,
+    ) (db.User, error)
+
+    GetUserByEmail(
+    	ctx context.Context,
+    	email string,
+    ) (db.User, error)
+
+    IncrementFailedLoginAttempts(
+    	ctx context.Context,
+    	id uuid.UUID,
+    ) (db.User, error)
+
+    ResetFailedLoginAttempts(
+    	ctx context.Context,
+    	id uuid.UUID,
+    ) (db.User, error)
+
+}
+
+Untuk sekarang kita masih memakai db.User dan db.CreateUserParams.
+
+Belum kita pisahkan menjadi domain model. Itu sengaja; kita fokus dulu ke repository/transaction boundary.
+
+3. user_repository.go
+
+Buat:
+
+internal/repository/user_repository.go
+
+Isi:
+
+package repository
+
+import (
+"context"
+
+    "github.com/google/uuid"
+    "github.com/jackc/pgx/v5/pgxpool"
+
+    "github.com/itsZenTouch/marketplace/internal/repository/db"
+
+)
+
+type userRepository struct {
+pool \*pgxpool.Pool
+}
+
+func NewUserRepository(pool \*pgxpool.Pool) UserRepository {
+return &userRepository{
+pool: pool,
+}
+}
+
+func (r \*userRepository) CreateUser(
+ctx context.Context,
+arg db.CreateUserParams,
+) (db.User, error) {
+queries := db.New(r.pool)
+
+    return queries.CreateUser(ctx, arg)
+
+}
+
+func (r \*userRepository) GetUserByID(
+ctx context.Context,
+id uuid.UUID,
+) (db.User, error) {
+queries := db.New(r.pool)
+
+    return queries.GetUserByID(ctx, id)
+
+}
+
+func (r \*userRepository) GetUserByEmail(
+ctx context.Context,
+email string,
+) (db.User, error) {
+queries := db.New(r.pool)
+
+    return queries.GetUserByEmail(ctx, email)
+
+}
+
+func (r \*userRepository) IncrementFailedLoginAttempts(
+ctx context.Context,
+id uuid.UUID,
+) (db.User, error) {
+queries := db.New(r.pool)
+
+    return queries.IncrementFailedLoginAttempts(ctx, id)
+
+}
+
+func (r \*userRepository) ResetFailedLoginAttempts(
+ctx context.Context,
+id uuid.UUID,
+) (db.User, error) {
+queries := db.New(r.pool)
+
+    return queries.ResetFailedLoginAttempts(ctx, id)
+
+}
+
+Ada satu hal yang sengaja kita lakukan di sini:
+
+queries := db.New(r.pool)
+
+Repository menjadi adapter antara application layer dan generated sqlc.
+
+STEP 06.2 — Transaction boundary
+
+Sekarang buat:
+
+internal/repository/transaction.go
+
+Isi:
+
+package repository
+
+import (
+"context"
+
+    "github.com/itsZenTouch/marketplace/internal/repository/db"
+
+)
+
+func (r *Repository) WithTx(
+ctx context.Context,
+fn func(q *db.Queries) error,
+) error {
+tx, err := r.pool.Begin(ctx)
+if err != nil {
+return err
+}
+
+    defer func() {
+    	_ = tx.Rollback(ctx)
+    }()
+
+    queries := db.New(tx)
+
+    if err := fn(queries); err != nil {
+    	return err
+    }
+
+    return tx.Commit(ctx)
+
+}
+
+Sekarang boundary-nya menjadi:
+
+Repository
+│
+├── pool
+│
+└── WithTx()
+│
+▼
+pgx.Tx
+│
+▼
+db.New(tx)
+│
+▼
+sqlc Queries
+
+Kenapa Rollback() tetap di defer?
+
+Misalnya callback gagal:
+
+return err
+
+maka transaction otomatis dicoba rollback.
+
+Kalau Commit() sudah berhasil, transaction sudah closed sehingga rollback di defer tidak melakukan apa-apa yang berarti. Error-nya sengaja kita abaikan.
+
+STEP 06.3 — Compile checkpoint
+
+Sekarang jangan masuk service dulu.
+
+Jalankan:
+
+gofmt -w ./internal/repository
+
+Kemudian:
+
+go test ./internal/repository/...
+
+Lalu:
+
+go vet ./internal/repository/...
+
+Dan terakhir:
+
+go build ./cmd/api
+
+Ada satu kemungkinan error
+
+Kalau compiler mengeluh pada:
+
+db.New(tx)
+
+atau interface DBTX, jangan kita tebak-tebak solusinya.
+
+Kirim error compiler tersebut karena kita akan menyesuaikan transaction boundary dengan db.go yang benar-benar dihasilkan sqlc v1.31.1 milik project kamu.
+
+Kalau empat command di atas semuanya PASS, checkpoint kita menjadi:
+
+STEP 01 Bootstrap ✅
+STEP 02 Configuration ✅
+STEP 03 PostgreSQL + pgxpool ✅
+STEP 04 Goose ✅
+STEP 05 sqlc v1.31.1 ✅
+STEP 06.1 Repository foundation ⬅️
+STEP 06.2 Transaction boundary ⬅️
+
+Setelah itu baru kita lanjut ke STEP 06.4 — integration test untuk repository + transaction, supaya kita membuktikan bukan cuma compile, tetapi benar-benar:
+
+Repository
+↓
+sqlc
+↓
+pgx.Tx
+↓
+PostgreSQL
+↓
+COMMIT / ROLLBACK
+
+Jalankan empat command checkpoint di atas dan kirim output-nya.
+
+---

@@ -30,6 +30,20 @@ FROM users
 WHERE id = $1
 LIMIT 1;
 
+-- name: GetUserByEmail :one
+SELECT id,
+  email,
+  password_hash,
+  status,
+  email_verified_at,
+  failed_login_attempts,
+  locked_until,
+  created_at,
+  updated_at
+FROM users
+WHERE email = $1
+LIMIT 1;
+
 -- name: IncrementFailedLoginAttempts :one
 UPDATE users
 SET

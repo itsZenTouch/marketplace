@@ -10,6 +10,7 @@ import (
 
 	"github.com/itsZenTouch/marketplace/internal/config"
 	"github.com/itsZenTouch/marketplace/internal/platform/database"
+	"github.com/itsZenTouch/marketplace/internal/repository"
 )
 
 func main() {
@@ -31,6 +32,9 @@ func main() {
 	}
 
 	defer dbPool.Close()
+
+	userRepository := repository.NewUserRepository(dbPool)
+	_ = userRepository
 
 	log.Println("database connection successfully")
 

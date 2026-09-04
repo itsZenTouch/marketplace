@@ -8,9 +8,9 @@ package db
 import (
 	"context"
 	"net/netip"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createAuthSession = `-- name: CreateAuthSession :one
@@ -43,12 +43,12 @@ RETURNING
 `
 
 type CreateAuthSessionParams struct {
-	ID               uuid.UUID          `json:"id"`
-	UserID           uuid.UUID          `json:"user_id"`
-	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        *string            `json:"user_agent"`
-	IpAddress        *netip.Addr        `json:"ip_address"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	ID               uuid.UUID   `json:"id"`
+	UserID           uuid.UUID   `json:"user_id"`
+	RefreshTokenHash string      `json:"refresh_token_hash"`
+	UserAgent        *string     `json:"user_agent"`
+	IpAddress        *netip.Addr `json:"ip_address"`
+	ExpiresAt        time.Time   `json:"expires_at"`
 }
 
 func (q *Queries) CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error) {

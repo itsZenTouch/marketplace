@@ -6,6 +6,7 @@ package db
 
 import (
 	"net/netip"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,10 +18,10 @@ type AuthSession struct {
 	RefreshTokenHash string             `json:"refresh_token_hash"`
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        *netip.Addr        `json:"ip_address"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
 }
 
 type User struct {
@@ -31,6 +32,6 @@ type User struct {
 	EmailVerifiedAt     pgtype.Timestamptz `json:"email_verified_at"`
 	FailedLoginAttempts int32              `json:"failed_login_attempts"`
 	LockedUntil         pgtype.Timestamptz `json:"locked_until"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	CreatedAt           time.Time          `json:"created_at"`
+	UpdatedAt           time.Time          `json:"updated_at"`
 }
