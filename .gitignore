@@ -1,0 +1,29 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build
+/bin/
+/tmp/
+/dist/
+
+# Coverage
+coverage.out
+coverage.html
+
+# Generated files
+gen/db/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
