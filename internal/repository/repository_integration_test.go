@@ -7,8 +7,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/itsZenTouch/marketplace/internal/repository/db"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/itsZenTouch/marketplace/internal/domain"
 )
 
 func TestRepositoryTransaction(t *testing.T) {
@@ -43,18 +44,18 @@ func TestRepositoryTransaction(t *testing.T) {
 		userID := uuid.New()
 		email := "repository-commit-" + userID.String() + "@example.com"
 
-		err := repo.RepoWithTx(ctx, func(q *db.Queries) error {
-			_, err := q.CreateUser(ctx, db.CreateUserParams{
+		err := repo.RepoWithTx(ctx, func(uow UnitOfWork) error {
+			_, err := uow.Users().CreateUser(ctx, CreateUserInput{
 				ID:           userID,
 				Email:        email,
 				PasswordHash: "test-hash",
-				Status:       "active",
+				Status:       domain.UserStatusActive,
 			})
 
 			return err
 		})
 		if err != nil {
-			t.Fatalf("WithTx: %v", err)
+			t.Fatalf("RepoWithTx: %v", err)
 		}
 
 		userRepo := NewUserRepository(pool)
@@ -88,12 +89,12 @@ func TestRepositoryTransaction(t *testing.T) {
 
 		expectedErr := context.Canceled
 
-		err := repo.RepoWithTx(ctx, func(q *db.Queries) error {
-			_, err := q.CreateUser(ctx, db.CreateUserParams{
+		err := repo.RepoWithTx(ctx, func(uow UnitOfWork) error {
+			_, err := uow.Users().CreateUser(ctx, CreateUserInput{
 				ID:           userID,
 				Email:        email,
 				PasswordHash: "test-hash",
-				Status:       "active",
+				Status:       domain.UserStatusActive,
 			})
 			if err != nil {
 				return err
@@ -104,7 +105,7 @@ func TestRepositoryTransaction(t *testing.T) {
 
 		if err != expectedErr {
 			t.Fatalf(
-				"WithTx error = %v, want %v",
+				"RepoWithTx error = %v, want %v",
 				err,
 				expectedErr,
 			)

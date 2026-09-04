@@ -11,12 +11,18 @@ import (
 )
 
 type authSessionRepository struct {
-	pool *pgxpool.Pool
+	db DBTX
 }
 
 func NewAuthSessionRepository(pool *pgxpool.Pool) *authSessionRepository {
 	return &authSessionRepository{
-		pool: pool,
+		db: pool,
+	}
+}
+
+func newAuthSessionRepository(dbtx DBTX) *authSessionRepository {
+	return &authSessionRepository{
+		db: dbtx,
 	}
 }
 
@@ -24,7 +30,7 @@ func (r *authSessionRepository) CreateAuthSession(
 	ctx context.Context,
 	input CreateAuthSessionInput,
 ) (domain.AuthSession, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	session, err := queries.CreateAuthSession(ctx, db.CreateAuthSessionParams{
 		ID:               input.ID,
@@ -45,7 +51,7 @@ func (r *authSessionRepository) GetAuthSessionByID(
 	ctx context.Context,
 	id uuid.UUID,
 ) (domain.AuthSession, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	session, err := queries.GetAuthSessionByID(ctx, id)
 	if err != nil {
@@ -59,7 +65,7 @@ func (r *authSessionRepository) RevokeAuthSession(
 	ctx context.Context,
 	id uuid.UUID,
 ) (domain.AuthSession, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	session, err := queries.RevokeAuthSession(ctx, id)
 	if err != nil {
@@ -73,7 +79,7 @@ func (r *authSessionRepository) ListAuthSessionsByUserID(
 	ctx context.Context,
 	userID uuid.UUID,
 ) ([]domain.AuthSession, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	sessions, err := queries.ListAuthSessionsByUserID(ctx, userID)
 	if err != nil {

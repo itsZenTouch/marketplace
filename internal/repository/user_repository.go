@@ -11,12 +11,18 @@ import (
 )
 
 type userRepository struct {
-	pool *pgxpool.Pool
+	db DBTX
 }
 
 func NewUserRepository(pool *pgxpool.Pool) *userRepository {
 	return &userRepository{
-		pool: pool,
+		db: pool,
+	}
+}
+
+func newUserRepository(dbtx DBTX) *userRepository {
+	return &userRepository{
+		db: dbtx,
 	}
 }
 
@@ -24,7 +30,7 @@ func (r *userRepository) CreateUser(
 	ctx context.Context,
 	input CreateUserInput,
 ) (domain.User, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	user, err := queries.CreateUser(ctx, db.CreateUserParams{
 		ID:           input.ID,
@@ -43,7 +49,7 @@ func (r *userRepository) GetUserByID(
 	ctx context.Context,
 	id uuid.UUID,
 ) (domain.User, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	user, err := queries.GetUserByID(ctx, id)
 	if err != nil {
@@ -57,7 +63,7 @@ func (r *userRepository) GetUserByEmail(
 	ctx context.Context,
 	email string,
 ) (domain.User, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	user, err := queries.GetUserByEmail(ctx, email)
 	if err != nil {
@@ -71,7 +77,7 @@ func (r *userRepository) IncrementFailedLoginAttempts(
 	ctx context.Context,
 	id uuid.UUID,
 ) (domain.User, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	user, err := queries.IncrementFailedLoginAttempts(ctx, id)
 	if err != nil {
@@ -85,7 +91,7 @@ func (r *userRepository) ResetFailedLoginAttempts(
 	ctx context.Context,
 	id uuid.UUID,
 ) (domain.User, error) {
-	queries := db.New(r.pool)
+	queries := db.New(r.db)
 
 	user, err := queries.ResetFailedLoginAttempts(ctx, id)
 	if err != nil {

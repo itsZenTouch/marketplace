@@ -26,6 +26,11 @@ type CreateAuthSessionInput struct {
 	ExpiresAt        time.Time
 }
 
+type UnitOfWork interface {
+	Users() *userRepository
+	AuthSessions() *authSessionRepository
+}
+
 type UserRepository interface {
 	CreateUser(
 		ctx context.Context,
