@@ -5,7 +5,7 @@
 package db
 
 import (
-	"net/netip"
+	"net"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,8 +16,8 @@ type AuthSession struct {
 	ID               uuid.UUID          `json:"id"`
 	UserID           uuid.UUID          `json:"user_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        *string            `json:"user_agent"`
-	IpAddress        *netip.Addr        `json:"ip_address"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt        time.Time          `json:"created_at"`

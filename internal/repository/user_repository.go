@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/itsZenTouch/marketplace/internal/domain"
 	"github.com/itsZenTouch/marketplace/internal/repository/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,45 +22,75 @@ func NewUserRepository(pool *pgxpool.Pool) *userRepository {
 
 func (r *userRepository) CreateUser(
 	ctx context.Context,
-	arg db.CreateUserParams,
-) (db.User, error) {
+	input CreateUserInput,
+) (domain.User, error) {
 	queries := db.New(r.pool)
 
-	return queries.CreateUser(ctx, arg)
+	user, err := queries.CreateUser(ctx, db.CreateUserParams{
+		ID:           input.ID,
+		Email:        input.Email,
+		PasswordHash: input.PasswordHash,
+		Status:       string(input.Status),
+	})
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return userToDomain(user), nil
 }
 
 func (r *userRepository) GetUserByID(
 	ctx context.Context,
 	id uuid.UUID,
-) (db.User, error) {
+) (domain.User, error) {
 	queries := db.New(r.pool)
 
-	return queries.GetUserByID(ctx, id)
+	user, err := queries.GetUserByID(ctx, id)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return userToDomain(user), nil
 }
 
 func (r *userRepository) GetUserByEmail(
 	ctx context.Context,
 	email string,
-) (db.User, error) {
+) (domain.User, error) {
 	queries := db.New(r.pool)
 
-	return queries.GetUserByEmail(ctx, email)
+	user, err := queries.GetUserByEmail(ctx, email)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return userToDomain(user), nil
 }
 
 func (r *userRepository) IncrementFailedLoginAttempts(
 	ctx context.Context,
 	id uuid.UUID,
-) (db.User, error) {
+) (domain.User, error) {
 	queries := db.New(r.pool)
 
-	return queries.IncrementFailedLoginAttempts(ctx, id)
+	user, err := queries.IncrementFailedLoginAttempts(ctx, id)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return userToDomain(user), nil
 }
 
 func (r *userRepository) ResetFailedLoginAttempts(
 	ctx context.Context,
 	id uuid.UUID,
-) (db.User, error) {
+) (domain.User, error) {
 	queries := db.New(r.pool)
 
-	return queries.ResetFailedLoginAttempts(ctx, id)
+	user, err := queries.ResetFailedLoginAttempts(ctx, id)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return userToDomain(user), nil
 }

@@ -29,3 +29,11 @@ sql:
 
           - db_type: "timestamptz"
             go_type: "time.Time"
+
+          - db_type: "inet"
+            nullable: true
+            go_type: "net.IP"
+
+          - db_type: "text"
+            nullable: true
+            go_type: "string"
