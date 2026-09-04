@@ -55,3 +55,18 @@ Sekarang jalankan:
 ```bash
 gofmt -w ./cmd ./internal
 ```
+
+## SQLC
+
+Generate type-safe database code:
+
+```bash
+sqlc generate
+```
+
+Generated code:
+
+`internal/repository/db/`
+
+Do not edit generated files manually.
+Update SQL queries/schema and run sqlc generate again.
