@@ -48,14 +48,6 @@ Check migration status:
 goose -dir migrations postgres "$DATABASE_URL" status
 ```
 
-# 36. Checkpoint database
-
-Sekarang jalankan:
-
-```bash
-gofmt -w ./cmd ./internal
-```
-
 ## SQLC
 
 Generate type-safe database code:
