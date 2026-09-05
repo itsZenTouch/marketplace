@@ -79,3 +79,19 @@ RETURNING
     created_at,
     updated_at;
 
+-- name: LockUserUntil :one
+UPDATE users
+SET
+    locked_until = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING
+    id,
+    email,
+    password_hash,
+    status,
+    email_verified_at,
+    failed_login_attempts,
+    locked_until,
+    created_at,
+    updated_at;

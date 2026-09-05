@@ -1,7 +1,12 @@
 package password
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"strings"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -21,8 +26,8 @@ func NewHasher() *Hasher {
 	return &Hasher{}
 }
 
-func (h *Hasher) Hash(password string) (string, error) {
-	if password == "" {
+func (h *Hasher) Hash(rawPassword string) (string, error) {
+	if rawPassword == "" {
 		return "", fmt.Errorf("password cannot be empty")
 	}
 
@@ -30,12 +35,51 @@ func (h *Hasher) Hash(password string) (string, error) {
 
 	// Kita akan menggunakan crypto/rand untuk salt.
 	// Implementasi lengkapnya kita buat setelah dependency siap.
-	_ = salt
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("generate password salt: %w", err)
+	}
 
-	return "", nil
+	key := deriveKey(rawPassword, salt)
+
+	return fmt.Sprintf("argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+		memoryCost,
+		timeCost,
+		parallelism,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
-func (h *Hasher) Compare(password, encodedHash string) error {
+func (h *Hasher) Compare(rawPassword, encodedHash string) error {
+	parts := strings.Split(encodedHash, "$")
+
+	if len(parts) != 5 {
+		return errors.New("invalid password salt")
+	}
+
+	if parts[0] != "argon2id" || parts[1] != "v=19" {
+		return errors.New("unsupported password hash")
+	}
+
+	salt, err := base64.RawStdEncoding.DecodeString(parts[3])
+	if err != nil {
+		return errors.New("invalid password salt")
+	}
+
+	expected, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return errors.New("invalid password hash")
+	}
+
+	actual := deriveKey(rawPassword, salt)
+
+	if len(actual) != len(expected) {
+		return errors.New("invalid password")
+	}
+
+	if subtle.ConstantTimeCompare(actual, expected) != 1 {
+		return errors.New("invalid password")
+	}
+
 	return nil
 }
 

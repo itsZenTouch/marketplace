@@ -56,4 +56,32 @@ type UserRepository interface {
 		ctx context.Context,
 		id uuid.UUID,
 	) (domain.User, error)
+
+	LockUserUntil(
+		ctx context.Context,
+		id uuid.UUID,
+		until *time.Time,
+	) (domain.User, error)
+}
+
+type AuthSessionRepository interface {
+	CreateAuthSession(
+		ctx context.Context,
+		input CreateAuthSessionInput,
+	) (domain.AuthSession, error)
+
+	GetAuthSessionByID(
+		ctx context.Context,
+		id uuid.UUID,
+	) (domain.AuthSession, error)
+
+	RevokeAuthSession(
+		ctx context.Context,
+		id uuid.UUID,
+	) (domain.AuthSession, error)
+
+	ListAuthSessionsByUserID(
+		ctx context.Context,
+		userID uuid.UUID,
+	) ([]domain.AuthSession, error)
 }

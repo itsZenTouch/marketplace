@@ -3,13 +3,19 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+
+	"github.com/itsZenTouch/marketplace/internal/auth"
 	"github.com/itsZenTouch/marketplace/internal/config"
 	"github.com/itsZenTouch/marketplace/internal/platform/database"
+	"github.com/itsZenTouch/marketplace/internal/platform/password"
+	"github.com/itsZenTouch/marketplace/internal/platform/token"
 	"github.com/itsZenTouch/marketplace/internal/repository"
 )
 
@@ -34,7 +40,48 @@ func main() {
 	defer dbPool.Close()
 
 	userRepository := repository.NewUserRepository(dbPool)
-	_ = userRepository
+
+	sessionRepository := repository.NewAuthSessionRepository(dbPool)
+
+	passwordHasher := password.NewHasher()
+
+	jwtService := token.NewJWT(
+		cfg.JWTSecret,
+		cfg.JWTIssuer,
+		cfg.JWTAccessTTL,
+		cfg.JWTRefreshTTL,
+	)
+
+	authService := auth.NewService(
+		userRepository,
+		sessionRepository,
+		passwordHasher,
+		jwtService,
+	)
+
+	authHandler := auth.NewHandler(authService)
+
+	router := chi.NewRouter()
+
+	router.Post("api/auth/login", authHandler.Login)
+
+	server := &http.Server{
+		Addr:              ":" + cfg.AppPort,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		log.Printf(
+			"marketplace API listening on port %s",
+			cfg.AppPort,
+		)
+
+		if err := server.ListenAndServe(); err != nil &&
+			err != http.ErrServerClosed {
+			log.Fatalf("server failed: %v", err)
+		}
+	}()
 
 	log.Println("database connection successfully")
 
@@ -55,10 +102,11 @@ func main() {
 		context.Background(),
 		10*time.Second,
 	)
-
 	defer cancel()
 
-	_ = shutdownCtx
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server shutdown failed: %v", err)
+	}
 
 	log.Println("server stopped")
 }

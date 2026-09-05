@@ -1630,3 +1630,959 @@ go list -m golang.org/x/crypto
 Kirim hasil go list -m golang.org/x/crypto.
 
 Setelah itu kita implementasikan Argon2id encoded hash secara lengkap + unit test, baru lanjut ke AuthService.
+
+# Authtentication Login
+
+Worked for 21s
+
+Siap. Aku cek kondisi repository `main` sekarang. Fondasinya sebenarnya sudah ada untuk authentication: tabel `users`, `auth_sessions`, repository user/session, JWT config, dan Argon2 dependency. Tapi **login belum terhubung ke HTTP server**, sementara password hasher masih stub sehingga saat ini belum bisa benar-benar login. GitHub+3
+
+Aku sarankan kita implement **login end-to-end** dengan flow:
+
+```
+POST /api/auth/login
+        │
+        ▼
+validate email/password
+        │
+        ▼
+find user by email
+        │
+        ▼
+check status + lock
+        │
+        ▼
+Argon2 password comparison
+        │
+        ├── gagal → increment failed attempts
+        │
+        └── sukses
+              │
+              ├── reset failed attempts
+              ├── create auth session
+              ├── generate access JWT
+              └── generate refresh token
+```
+
+Repository kamu memang sudah menyimpan `refresh_token_hash`, `user_agent`, IP, expiry, dan revoke state di `auth_sessions`, jadi desain ini cocok dengan struktur yang sudah dibuat. GitHub+1
+
+## 1\. Perbaiki password hasher
+
+File sekarang masih mengembalikan string kosong dari `Hash()` dan `nil` dari `Compare()`, jadi **semua password secara praktis dianggap valid**. GitHub
+
+Ganti `internal/platform/password/hasher.go` menjadi:
+
+```
+package password
+
+import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"strings"
+
+	"golang.org/x/crypto/argon2"
+)
+
+const (
+	saltLength = 16
+
+	timeCost    = 3
+	memoryCost  = 64 * 1024
+	parallelism = 2
+	keyLength   = 32
+)
+
+type Hasher struct{}
+
+func NewHasher() *Hasher {
+	return &Hasher{}
+}
+
+func (h *Hasher) Hash(rawPassword string) (string, error) {
+	if rawPassword == "" {
+		return "", errors.New("password cannot be empty")
+	}
+
+	salt := make([]byte, saltLength)
+
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("generate password salt: %w", err)
+	}
+
+	key := deriveKey(rawPassword, salt)
+
+	return fmt.Sprintf(
+		"argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+		memoryCost,
+		timeCost,
+		parallelism,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(key),
+	), nil
+}
+
+func (h *Hasher) Compare(rawPassword, encodedHash string) error {
+	parts := strings.Split(encodedHash, "$")
+
+	if len(parts) != 6 {
+		return errors.New("invalid password hash")
+	}
+
+	if parts[0] != "argon2id" || parts[1] != "v=19" {
+		return errors.New("unsupported password hash")
+	}
+
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return errors.New("invalid password salt")
+	}
+
+	expected, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return errors.New("invalid password hash")
+	}
+
+	actual := deriveKey(rawPassword, salt)
+
+	if len(actual) != len(expected) {
+		return errors.New("invalid password")
+	}
+
+	if subtle.ConstantTimeCompare(actual, expected) != 1 {
+		return errors.New("invalid password")
+	}
+
+	return nil
+}
+
+func deriveKey(password string, salt []byte) []byte {
+	return argon2.IDKey(
+		[]byte(password),
+		salt,
+		timeCost,
+		memoryCost,
+		parallelism,
+		keyLength,
+	)
+}
+```
+
+Ada satu hal penting: format yang kita pakai adalah:
+
+```
+argon2id$v=19$m=65536,t=3,p=2$<salt>$<hash>
+```
+
+Jadi hash password tidak pernah disimpan sebagai plaintext.
+
+---
+
+# 2\. Tambahkan JWT service
+
+Buat:
+
+`internal/platform/token/jwt.go`
+
+```
+package token
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+)
+
+type JWT struct {
+	secret     []byte
+	issuer     string
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+}
+
+func NewJWT(
+	secret string,
+	issuer string,
+	accessTTL time.Duration,
+	refreshTTL time.Duration,
+) *JWT {
+	return &JWT{
+		secret:     []byte(secret),
+		issuer:     issuer,
+		accessTTL:  accessTTL,
+		refreshTTL: refreshTTL,
+	}
+}
+
+type AccessClaims struct {
+	UserID string `json:"uid"`
+	Type   string `json:"type"`
+
+	jwt.RegisteredClaims
+}
+
+func (j *JWT) CreateAccessToken(userID uuid.UUID) (string, error) {
+	now := time.Now()
+
+	claims := AccessClaims{
+		UserID: userID.String(),
+		Type:   "access",
+		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        uuid.New().String(),
+			Subject:   userID.String(),
+			Issuer:    j.issuer,
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(j.accessTTL)),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	return token.SignedString(j.secret)
+}
+
+func (j *JWT) CreateRefreshToken(sessionID uuid.UUID) (
+	string,
+	string,
+	error,
+) {
+	randomBytes := make([]byte, 32)
+
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", "", fmt.Errorf("generate refresh token: %w", err)
+	}
+
+	randomPart := base64.RawURLEncoding.EncodeToString(randomBytes)
+
+	token := sessionID.String() + "." + randomPart
+
+	hash := sha256.Sum256([]byte(token))
+	hashString := hex.EncodeToString(hash[:])
+
+	return token, hashString, nil
+}
+
+func HashRefreshToken(token string) string {
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
+}
+
+func ParseRefreshSessionID(refreshToken string) (uuid.UUID, error) {
+	var sessionID string
+
+	_, err := fmt.Sscanf(refreshToken, "%36s", &sessionID)
+	if err != nil {
+		return uuid.Nil, errors.New("invalid refresh token")
+	}
+
+	// Token format:
+	// <uuid>.<random>
+	for i := range refreshToken {
+		if refreshToken[i] == '.' {
+			sessionID = refreshToken[:i]
+			break
+		}
+	}
+
+	id, err := uuid.Parse(sessionID)
+	if err != nil {
+		return uuid.Nil, errors.New("invalid refresh token")
+	}
+
+	return id, nil
+}
+```
+
+Untuk login sekarang sebenarnya `CreateRefreshToken()` saja sudah cukup.
+
+---
+
+# 3\. Tambahkan AuthSessionRepository interface
+
+Repository kamu sudah punya implementasi `authSessionRepository`, tetapi interface abstraction-nya belum ada. GitHub+1
+
+Tambahkan ke `internal/repository/interfaces.go`:
+
+```
+type AuthSessionRepository interface {
+	CreateAuthSession(
+		ctx context.Context,
+		input CreateAuthSessionInput,
+	) (domain.AuthSession, error)
+
+	GetAuthSessionByID(
+		ctx context.Context,
+		id uuid.UUID,
+	) (domain.AuthSession, error)
+
+	RevokeAuthSession(
+		ctx context.Context,
+		id uuid.UUID,
+	) (domain.AuthSession, error)
+
+	ListAuthSessionsByUserID(
+		ctx context.Context,
+		userID uuid.UUID,
+	) ([]domain.AuthSession, error)
+}
+```
+
+---
+
+# 4\. Buat Auth Service
+
+Buat directory:
+
+```
+internal/auth/
+```
+
+Kemudian:
+
+`internal/auth/service.go`
+
+```
+package auth
+
+import (
+	"context"
+	"errors"
+	"net"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/itsZenTouch/marketplace/internal/domain"
+	"github.com/itsZenTouch/marketplace/internal/platform/password"
+	"github.com/itsZenTouch/marketplace/internal/platform/token"
+	"github.com/itsZenTouch/marketplace/internal/repository"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrAccountSuspended   = errors.New("account suspended")
+	ErrAccountDisabled    = errors.New("account disabled")
+	ErrAccountLocked      = errors.New("account temporarily locked")
+)
+
+type Service struct {
+	users       repository.UserRepository
+	sessions    repository.AuthSessionRepository
+	password    *password.Hasher
+	token       *token.JWT
+}
+
+func NewService(
+	users repository.UserRepository,
+	sessions repository.AuthSessionRepository,
+	passwordHasher *password.Hasher,
+	jwt *token.JWT,
+) *Service {
+	return &Service{
+		users:    users,
+		sessions: sessions,
+		password: passwordHasher,
+		token:    jwt,
+	}
+}
+
+type LoginInput struct {
+	Email     string
+	Password  string
+	UserAgent string
+	IPAddress net.IP
+}
+
+type LoginOutput struct {
+	User         domain.User
+	AccessToken  string
+	RefreshToken string
+}
+
+func (s *Service) Login(
+	ctx context.Context,
+	input LoginInput,
+) (LoginOutput, error) {
+	email := strings.ToLower(strings.TrimSpace(input.Email))
+
+	if email == "" || input.Password == "" {
+		return LoginOutput{}, ErrInvalidCredentials
+	}
+
+	user, err := s.users.GetUserByEmail(ctx, email)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return LoginOutput{}, ErrInvalidCredentials
+		}
+
+		return LoginOutput{}, err
+	}
+
+	now := time.Now()
+
+	if user.LockedUntil != nil && user.LockedUntil.After(now) {
+		return LoginOutput{}, ErrAccountLocked
+	}
+
+	switch user.Status {
+	case domain.UserStatusSuspended:
+		return LoginOutput{}, ErrAccountSuspended
+
+	case domain.UserStatusDisabled:
+		return LoginOutput{}, ErrAccountDisabled
+	}
+
+	if err := s.password.Compare(input.Password, user.PasswordHash); err != nil {
+		_, _ = s.users.IncrementFailedLoginAttempts(ctx, user.ID)
+
+		return LoginOutput{}, ErrInvalidCredentials
+	}
+
+	user, err = s.users.ResetFailedLoginAttempts(ctx, user.ID)
+	if err != nil {
+		return LoginOutput{}, err
+	}
+
+	sessionID := uuid.New()
+
+	refreshToken, refreshTokenHash, err :=
+		s.token.CreateRefreshToken(sessionID)
+
+	if err != nil {
+		return LoginOutput{}, err
+	}
+
+	_, err = s.sessions.CreateAuthSession(
+		ctx,
+		repository.CreateAuthSessionInput{
+			ID:               sessionID,
+			UserID:           user.ID,
+			RefreshTokenHash: refreshTokenHash,
+			UserAgent:        input.UserAgent,
+			IPAddress:        input.IPAddress,
+			ExpiresAt:        now.Add(30 * 24 * time.Hour),
+		},
+	)
+
+	if err != nil {
+		return LoginOutput{}, err
+	}
+
+	accessToken, err := s.token.CreateAccessToken(user.ID)
+	if err != nil {
+		return LoginOutput{}, err
+	}
+
+	return LoginOutput{
+		User:         user,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}, nil
+}
+```
+
+**Catatan:** TTL refresh session sebaiknya jangan hardcode `30 * 24h`. Karena config kamu sudah punya `JWT_REFRESH_TTL=720h`, sebaiknya `JWT` menyediakan method untuk mengambil TTL atau service menerima refresh TTL. Config repository memang sudah mendefinisikan access dan refresh TTL. GitHub+1
+
+Versi lebih bersih:
+
+```
+type JWT struct {
+	secret     []byte
+	issuer     string
+	accessTTL  time.Duration
+	refreshTTL time.Duration
+}
+
+func (j *JWT) RefreshTTL() time.Duration {
+	return j.refreshTTL
+}
+```
+
+Lalu:
+
+```
+ExpiresAt: now.Add(s.token.RefreshTTL()),
+```
+
+---
+
+# 5\. Buat HTTP handler
+
+Buat:
+
+`internal/auth/handler.go`
+
+```
+package auth
+
+import (
+	"encoding/json"
+	"errors"
+	"net"
+	"net/http"
+	"strings"
+)
+
+type Handler struct {
+	service *Service
+}
+
+func NewHandler(service *Service) *Handler {
+	return &Handler{
+		service: service,
+	}
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	User struct {
+		ID     string `json:"id"`
+		Email  string `json:"email"`
+		Status string `json:"status"`
+	} `json:"user"`
+
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	var req loginRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request body",
+		})
+		return
+	}
+
+	ip := net.ParseIP(r.RemoteAddr)
+
+	if ip == nil {
+		// Remove port if RemoteAddr is "IP:PORT".
+		host := r.RemoteAddr
+
+		if idx := strings.LastIndex(host, ":"); idx > -1 {
+			ip = net.ParseIP(host[:idx])
+		}
+	}
+
+	result, err := h.service.Login(
+		r.Context(),
+		LoginInput{
+			Email:     req.Email,
+			Password:  req.Password,
+			UserAgent: r.UserAgent(),
+			IPAddress: ip,
+		},
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "invalid email or password",
+			})
+
+		case errors.Is(err, ErrAccountLocked):
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{
+				"error": "account temporarily locked",
+			})
+
+		case errors.Is(err, ErrAccountSuspended):
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "account suspended",
+			})
+
+		case errors.Is(err, ErrAccountDisabled):
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "account disabled",
+			})
+
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "internal server error",
+			})
+		}
+
+		return
+	}
+
+	response := loginResponse{
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+	}
+
+	response.User.ID = result.User.ID.String()
+	response.User.Email = result.User.Email
+	response.User.Status = string(result.User.Status)
+
+	writeJSON(w, http.StatusOK, response)
+}
+
+func writeJSON(
+	w http.ResponseWriter,
+	status int,
+	value any,
+) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(value)
+}
+```
+
+Ada sedikit improvement yang perlu kita lakukan untuk IP parsing: lebih aman memakai `net.SplitHostPort()`. Jadi versi production-nya:
+
+```
+host, _, err := net.SplitHostPort(r.RemoteAddr)
+if err == nil {
+	ip = net.ParseIP(host)
+} else {
+	ip = net.ParseIP(r.RemoteAddr)
+}
+```
+
+---
+
+# 6\. Router
+
+Saat ini `cmd/api/main.go` **bahkan belum menjalankan HTTP server**; setelah database dibuat, program hanya menunggu SIGTERM. GitHub
+
+Jadi kita perlu sambungkan Chi.
+
+Tambahkan dependency langsung kalau `go.mod` belum mengklasifikasikannya:
+
+```
+go get github.com/go-chi/chi/v5
+```
+
+Kemudian ubah `main.go`.
+
+Bagian inti:
+
+```
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/itsZenTouch/marketplace/internal/auth"
+	"github.com/itsZenTouch/marketplace/internal/config"
+	"github.com/itsZenTouch/marketplace/internal/platform/database"
+	"github.com/itsZenTouch/marketplace/internal/platform/password"
+	"github.com/itsZenTouch/marketplace/internal/platform/token"
+	"github.com/itsZenTouch/marketplace/internal/repository"
+)
+```
+
+Setelah:
+
+```
+userRepository := repository.NewUserRepository(dbPool)
+```
+
+tambahkan:
+
+```
+sessionRepository := repository.NewAuthSessionRepository(dbPool)
+
+passwordHasher := password.NewHasher()
+
+jwtService := token.NewJWT(
+	cfg.JWTSecret,
+	cfg.JWTIssuer,
+	cfg.JWTAccessTTL,
+	cfg.JWTRefreshTTL,
+)
+
+authService := auth.NewService(
+	userRepository,
+	sessionRepository,
+	passwordHasher,
+	jwtService,
+)
+
+authHandler := auth.NewHandler(authService)
+```
+
+Kemudian buat router:
+
+```
+router := chi.NewRouter()
+
+router.Post(
+	"/api/auth/login",
+	authHandler.Login,
+)
+```
+
+Dan server:
+
+```
+server := &http.Server{
+	Addr:              ":" + cfg.AppPort,
+	Handler:           router,
+	ReadHeaderTimeout: 5 * time.Second,
+}
+
+go func() {
+	log.Printf(
+		"marketplace API listening on port %s",
+		cfg.AppPort,
+	)
+
+	if err := server.ListenAndServe(); err != nil &&
+		err != http.ErrServerClosed {
+		log.Fatalf("server failed: %v", err)
+	}
+}()
+```
+
+Kemudian pada bagian shutdown:
+
+```
+shutdownCtx, cancel := context.WithTimeout(
+	context.Background(),
+	10*time.Second,
+)
+defer cancel()
+
+if err := server.Shutdown(shutdownCtx); err != nil {
+	log.Printf("server shutdown failed: %v", err)
+}
+
+log.Println("server stopped")
+```
+
+---
+
+# 7\. Satu masalah penting: failed login belum melakukan lock
+
+Database kamu sudah punya:
+
+```
+failed_login_attempts
+locked_until
+```
+
+tetapi query saat ini hanya:
+
+```
+IncrementFailedLoginAttempts
+ResetFailedLoginAttempts
+```
+
+Tidak ada query untuk mengisi `locked_until`. GitHub
+
+Jadi **jangan menganggap lockout sudah bekerja** hanya karena kolomnya ada.
+
+Tambahkan ke `sql/queries/users.sql`:
+
+```
+-- name: LockUserUntil :one
+UPDATE users
+SET
+    locked_until = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING
+    id,
+    email,
+    password_hash,
+    status,
+    email_verified_at,
+    failed_login_attempts,
+    locked_until,
+    created_at,
+    updated_at;
+```
+
+Lalu:
+
+```
+sqlc generate
+```
+
+Repository:
+
+```
+func (r *userRepository) LockUserUntil(
+	ctx context.Context,
+	id uuid.UUID,
+	until time.Time,
+) (domain.User, error) {
+	queries := db.New(r.db)
+
+	user, err := queries.LockUserUntil(
+		ctx,
+		db.LockUserUntilParams{
+			ID:          id,
+			LockedUntil: until,
+		},
+	)
+	if err != nil {
+		return domain.User{}, err
+	}
+
+	return userToDomain(user), nil
+}
+```
+
+Dan interface:
+
+```
+LockUserUntil(
+	ctx context.Context,
+	id uuid.UUID,
+	until time.Time,
+) (domain.User, error)
+```
+
+Kemudian di login:
+
+```
+if err := s.password.Compare(input.Password, user.PasswordHash); err != nil {
+	failedUser, _ := s.users.IncrementFailedLoginAttempts(
+		ctx,
+		user.ID,
+	)
+
+	const maxAttempts = 5
+
+	if failedUser.FailedLoginAttempts >= maxAttempts {
+		_, _ = s.users.LockUserUntil(
+			ctx,
+			user.ID,
+			time.Now().Add(15*time.Minute),
+		)
+	}
+
+	return LoginOutput{}, ErrInvalidCredentials
+}
+```
+
+Dengan begitu:
+
+```
+5x password salah
+       ↓
+locked_until = NOW() + 15 minutes
+       ↓
+login berikutnya
+       ↓
+429 Too Many Requests
+```
+
+---
+
+# 8\. Test login
+
+Setelah semua file dibuat:
+
+```
+go test ./...
+```
+
+Kemudian:
+
+```
+sqlc generate
+```
+
+Lalu migration:
+
+```
+goose -dir migrations postgres "$DATABASE_URL" up
+```
+
+Repository kamu memang sudah menggunakan Goose untuk migration dan `sqlc generate` untuk generated database code. GitHub
+
+Untuk membuat user test, kita juga membutuhkan **register** atau seed user, karena tabel `users` mensyaratkan `password_hash`. Schema user saat ini memang menyimpan password sebagai hash, bukan plaintext. GitHub
+
+Setelah ada user:
+
+```
+curl -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "password123"
+  }'
+```
+
+Expected:
+
+```
+{
+  "user": {
+    "id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "email": "user@example.com",
+    "status": "active"
+  },
+  "access_token": "eyJ...",
+  "refresh_token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx...."
+}
+```
+
+## Urutan pengerjaan yang aku rekomendasikan
+
+Jangan langsung membuat semua fitur authentication sekaligus. Kita selesaikan bertahap:
+
+1. **Password hashing Argon2** ← sekarang
+2. **Login endpoint** ← sekarang
+3. **JWT access token**
+4. **Refresh token + session**
+5. **Authentication middleware**
+6. **`GET /api/auth/me`**
+7. **Logout / revoke session**
+8. **Register**
+9. Email verification
+10. Forgot/reset password
+
+Fondasi database untuk session sebenarnya sudah cukup bagus untuk dilanjutkan ke tahap refresh token dan logout. GitHub+1
+
+**Tapi ada satu hal:** aku belum bisa mengubah langsung file di repository GitHub-mu dari sini. Kalau kamu bekerja di local repo, implementasi di atas bisa langsung kamu tempel. Kalau kamu kirimkan **isi `main.go`, `go.mod`, dan struktur `internal` versi local-mu setelah perubahan terakhir**, aku bisa lanjutkan dari situ dan kita rapikan sampai `go test ./...` benar-benar hijau.
+
+Sources
+
+# Refactor jwt.go ParseRefreshSessionID
+
+```go
+func ParseRefreshSessionID(refreshToken string) (uuid.UUID, error) {
+	sessionID, random, ok := strings.Cut(refreshToken, ".")
+	if !ok || random == "" {
+		return uuid.Nil, errors.New("invalid refresh token")
+	}
+
+	id, err := uuid.Parse(sessionID)
+	if err != nil {
+		return uuid.Nil, errors.New("invalid refresh token")
+	}
+
+	return id, nil
+}
+```

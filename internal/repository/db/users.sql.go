@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -143,6 +144,46 @@ RETURNING
 
 func (q *Queries) IncrementFailedLoginAttempts(ctx context.Context, id uuid.UUID) (User, error) {
 	row := q.db.QueryRow(ctx, incrementFailedLoginAttempts, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.PasswordHash,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.FailedLoginAttempts,
+		&i.LockedUntil,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockUserUntil = `-- name: LockUserUntil :one
+UPDATE users
+SET
+    locked_until = $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING
+    id,
+    email,
+    password_hash,
+    status,
+    email_verified_at,
+    failed_login_attempts,
+    locked_until,
+    created_at,
+    updated_at
+`
+
+type LockUserUntilParams struct {
+	ID          uuid.UUID          `json:"id"`
+	LockedUntil pgtype.Timestamptz `json:"locked_until"`
+}
+
+func (q *Queries) LockUserUntil(ctx context.Context, arg LockUserUntilParams) (User, error) {
+	row := q.db.QueryRow(ctx, lockUserUntil, arg.ID, arg.LockedUntil)
 	var i User
 	err := row.Scan(
 		&i.ID,

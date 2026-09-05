@@ -17,6 +17,7 @@ const (
 type User struct {
 	ID                  uuid.UUID
 	Email               string
+	PasswordHash        string
 	Status              UserStatus
 	EmailVerifiedAt     *time.Time
 	FailedLoginAttempts int
