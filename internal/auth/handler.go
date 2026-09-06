@@ -120,6 +120,26 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "unauthorized",
+		})
+		return
+	}
+
+	user, err := h.service.users.GetUserByID(r.Context(), userID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "internal server error",
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, user)
+}
+
 func writeJSON(
 	w http.ResponseWriter,
 	status int,

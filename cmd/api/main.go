@@ -67,6 +67,8 @@ func main() {
 
 	router.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(jwtService))
+
+		r.Get("/api/auth/me", authHandler.Me)
 	})
 
 	server := &http.Server{
