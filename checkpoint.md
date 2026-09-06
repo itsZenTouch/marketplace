@@ -2567,7 +2567,640 @@ Fondasi database untuk session sebenarnya sudah cukup bagus untuk dilanjutkan ke
 
 **Tapi ada satu hal:** aku belum bisa mengubah langsung file di repository GitHub-mu dari sini. Kalau kamu bekerja di local repo, implementasi di atas bisa langsung kamu tempel. Kalau kamu kirimkan **isi `main.go`, `go.mod`, dan struktur `internal` versi local-mu setelah perubahan terakhir**, aku bisa lanjutkan dari situ dan kita rapikan sampai `go test ./...` benar-benar hijau.
 
-Sources
+# Checkpoint saat ini. Rencana, target.
+
+## Start
+
+Sudah. Saya sudah membaca repository **`itsZenTouch/marketplace`** dari root sampai ke layer authentication, database, repository, migration, konfigurasi, dan checkpoint pengembangannya. GitHub+1
+
+Buka repository marketplace
+
+## Gambaran besar project
+
+Ini adalah **backend multi-seller marketplace** berbasis Go. Stack yang dipakai sekarang:
+
+- Go 1.27.1
+- Chi untuk HTTP router
+- PostgreSQL
+- `pgxpool` untuk connection pool
+- `sqlc` untuk generated, type-safe database access
+- Goose untuk migration
+- Argon2id untuk password hashing
+- JWT untuk access token
+- Refresh token berbasis random secret + SHA-256 hash
+- `google/uuid`
+- validator sudah menjadi bagian dependency/arah desain project
+
+Struktur besarnya sudah cukup jelas:
+
+```
+marketplace/
+├── cmd/
+│   └── api/
+│       └── main.go
+│
+├── internal/
+│   ├── auth/
+│   │   ├── handler.go
+│   │   └── service.go
+│   │
+│   ├── config/
+│   │   ├── config.go
+│   │   └── config_test.go
+│   │
+│   ├── domain/
+│   │   ├── users.go
+│   │   └── auth_session.go
+│   │
+│   ├── platform/
+│   │   ├── database/
+│   │   ├── password/
+│   │   └── token/
+│   │
+│   └── repository/
+│       ├── db/
+│       ├── dbtx.go
+│       ├── interfaces.go
+│       ├── mappers.go
+│       ├── repository.go
+│       ├── session_repository.go
+│       ├── user_repository.go
+│       └── ...
+│
+├── migrations/
+├── sql/
+│   ├── schema/
+│   └── queries/
+│
+├── checkpoint.md
+├── go.mod
+└── sqlc.yaml
+```
+
+Arsitektur ini pada dasarnya:
+
+```
+HTTP
+ ↓
+Handler
+ ↓
+Service / Business Logic
+ ↓
+Repository Interface
+ ↓
+Repository Implementation
+ ↓
+sqlc generated code
+ ↓
+pgx / PostgreSQL
+```
+
+Dan itu fondasi yang bagus untuk marketplace yang nantinya akan berkembang cukup besar. GitHub+1
+
+---
+
+## Kondisi authentication sekarang
+
+Bagian authentication ternyata sudah jauh lebih maju daripada sekadar bootstrap.
+
+### 1\. User domain
+
+`domain.User` sekarang mempunyai:
+
+```
+ID
+Email
+PasswordHash
+Status
+EmailVerifiedAt
+FailedLoginAttempts
+LockedUntil
+```
+
+dengan status:
+
+```
+active
+suspended
+disabled
+```
+
+GitHub Database juga sudah mempunyai constraint untuk status dan memastikan `failed_login_attempts >= 0`. GitHub
+
+### 2\. Auth session
+
+`AuthSession` menyimpan:
+
+```
+ID
+UserID
+RefreshTokenHash
+UserAgent
+IPAddress
+ExpiresAt
+RevokedAt
+```
+
+GitHub Database-nya juga sudah punya foreign key:
+
+```
+auth_sessions.user_id
+        ↓
+users.id
+```
+
+dengan `ON DELETE CASCADE`, plus index untuk `user_id` dan `expires_at`. GitHub
+
+Jadi desain refresh-session sebenarnya sudah disiapkan dengan benar.
+
+---
+
+## Login flow yang sekarang
+
+Flow-nya sudah seperti ini:
+
+```
+POST /api/auth/login
+        │
+        ▼
+handler.Login()
+        │
+        ▼
+normalize email
+        │
+        ▼
+GetUserByEmail()
+        │
+        ▼
+check locked_until
+        │
+        ├── locked → 429
+        │
+        ▼
+check account status
+        │
+        ├── suspended → 403
+        ├── disabled  → 403
+        │
+        ▼
+Argon2id Compare()
+        │
+        ├── gagal
+        │    └── increment failed attempts
+        │
+        ▼
+ResetFailedLoginAttempts()
+        │
+        ▼
+CreateRefreshToken()
+        │
+        ▼
+CreateAuthSession()
+        │
+        ▼
+CreateAccessToken()
+        │
+        ▼
+200
+{
+  user,
+  access_token,
+  refresh_token
+}
+```
+
+Itu terlihat langsung dari service authentication dan handler saat ini. GitHub+1
+
+---
+
+## Password security
+
+Password hashing menggunakan **Argon2id**, dengan parameter saat ini:
+
+```
+salt       = 16 bytes
+time       = 3
+memory     = 64 MiB
+parallel   = 2
+key        = 32 bytes
+```
+
+Salt dibuat menggunakan `crypto/rand`, lalu hasilnya disimpan dalam format encoded yang membawa parameter Argon2id tersebut. Comparison juga memakai `subtle.ConstantTimeCompare`. GitHub
+
+Jadi bagian ini **bukan plaintext / bcrypt sederhana**; fondasinya sudah cukup serius.
+
+Ada satu hal kecil yang saya catat: `.env.example` masih memiliki `PASSWORD_HASH_COST=12`, tetapi implementation Argon2 sekarang tidak membaca variable tersebut sama sekali. Artinya environment variable itu saat ini misleading/dead configuration. GitHub+1
+
+---
+
+## JWT + refresh token
+
+Access token menggunakan:
+
+```
+HS256
+```
+
+dan claim custom:
+
+```
+{
+  "uid": "...",
+  "type": "access"
+}
+```
+
+plus registered claims seperti:
+
+```
+jti
+sub
+iss
+iat
+exp
+```
+
+GitHub Default TTL:
+
+```
+access  = 15 menit
+refresh = 720 jam
+         = 30 hari
+```
+
+GitHub Yang saya suka dari desain refresh token-nya: **refresh token mentah tidak disimpan di database**.
+
+Formatnya:
+
+```
+sessionUUID.randomSecret
+```
+
+Kemudian database hanya menyimpan:
+
+```
+SHA-256(refresh_token)
+```
+
+GitHub Ini jauh lebih sehat daripada menyimpan refresh token plaintext.
+
+---
+
+# Tapi ada beberapa hal penting yang saya temukan
+
+Ini bagian yang menurut saya paling penting sebelum kita melanjutkan.
+
+## 1\. Route login saat ini sudah ada, tetapi ada detail path yang perlu dirapikan
+
+Di `main.go` sekarang:
+
+```
+router.Post("api/auth/login", authHandler.Login)
+```
+
+Saya akan ubah menjadi:
+
+```
+router.Post("/api/auth/login", authHandler.Login)
+```
+
+supaya route convention-nya eksplisit dan konsisten. Server + graceful shutdown juga sudah dipasang. GitHub
+
+---
+
+## 2\. Validator belum benar-benar digunakan
+
+Struct request mempunyai:
+
+```
+Email    string `json:"email" validate:"required,email,max=255"`
+Password string `json:"password" validate:"required,min=8,max=128"`
+```
+
+tetapi `handler.Login()` saat ini hanya melakukan:
+
+```
+json.NewDecoder(r.Body).Decode(&req)
+```
+
+dan **tidak memanggil validator**. GitHub
+
+Jadi tag validation tersebut sekarang belum memberikan efek.
+
+Ini harus kita bereskan sebelum authentication dianggap production-ready.
+
+---
+
+## 3\. Login lockout sekarang sudah diimplementasikan
+
+Checkpoint lama sempat menyebut bahwa `locked_until` belum digunakan. Namun repository **HEAD saat ini sudah lebih maju**.
+
+Sekarang sudah ada:
+
+```
+IncrementFailedLoginAttempts
+LockUserUntil
+ResetFailedLoginAttempts
+```
+
+dan service melakukan:
+
+```
+failed attempts >= 5
+        ↓
+locked_until = now + 15 minutes
+```
+
+GitHub+1 Jadi `checkpoint.md` memang merupakan catatan proses development, **bukan selalu representasi persis state code terbaru**. Ini penting supaya kita tidak mengikuti checkpoint lama secara buta.
+
+---
+
+## 4\. Ada potensi race condition pada failed-login counter
+
+Ini salah satu hal yang akan saya perhatikan ketika kita hardening auth.
+
+Sekarang flow:
+
+```
+IncrementFailedLoginAttempts()
+        ↓
+ambil hasil failed count
+        ↓
+kalau >= 5
+        ↓
+LockUserUntil()
+```
+
+Secara functional benar, tetapi operasi increment dan lock adalah dua database operation terpisah.
+
+Untuk sistem dengan concurrent login attempts, saya lebih suka membuat lockout behavior lebih atomic di database atau setidaknya memastikan semantics-nya tidak bisa dilewati oleh request paralel.
+
+Bukan blocker untuk development sekarang, tetapi **wajib kita pikirkan sebelum production**.
+
+---
+
+## 5\. Refresh token infrastructure sudah ada, tetapi refresh endpoint belum ada
+
+Ini penting.
+
+Kita sudah punya:
+
+```
+CreateRefreshToken()
+ParseRefreshSessionID()
+HashRefreshToken()
+CreateAuthSession()
+GetAuthSessionByID()
+RevokeAuthSession()
+ListAuthSessionsByUserID()
+```
+
+GitHub+1 Tetapi belum ada:
+
+```
+POST /api/auth/refresh
+POST /api/auth/logout
+```
+
+Dan belum ada middleware authentication.
+
+Jadi sekarang access token dan refresh token **sudah bisa dibuat**, tetapi lifecycle authentication belum selesai.
+
+---
+
+# 6\. Belum ada authentication middleware
+
+Ini menurut saya langkah arsitektural berikutnya yang paling natural.
+
+Target:
+
+```
+Authorization: Bearer <access-token>
+                    ↓
+              Auth Middleware
+                    ↓
+              Parse + Verify JWT
+                    ↓
+                User ID
+                    ↓
+             request context
+                    ↓
+             protected handler
+```
+
+Kemudian kita bisa punya:
+
+```
+GET /api/auth/me
+```
+
+sebagai endpoint protected pertama.
+
+---
+
+# 7\. Register belum ada
+
+Ini agak fundamental.
+
+Saat ini kita punya:
+
+```
+users table
+login
+password hashing
+sessions
+JWT
+```
+
+tetapi belum ada jalan normal untuk membuat user baru.
+
+Checkpoint juga sudah mengarah ke:
+
+```
+Authentication
+├── password hashing
+├── login
+├── JWT
+├── refresh token
+├── middleware
+├── /me
+├── logout
+├── register
+├── email verification
+└── password reset
+```
+
+GitHub Saya setuju dengan urutan tersebut.
+
+---
+
+# 8\. Ada sedikit architectural smell pada repository interface
+
+`UnitOfWork` saat ini:
+
+```
+type UnitOfWork interface {
+    Users() *userRepository
+    AuthSessions() *authSessionRepository
+}
+```
+
+Jadi interface tersebut expose **concrete repository types**, bukan interface abstraction. GitHub
+
+Padahal repository abstraction yang sebenarnya sudah ada:
+
+```
+type UserRepository interface
+type AuthSessionRepository interface
+```
+
+Ini belum menjadi masalah karena belum banyak transaction-heavy business flow.
+
+Tapi ketika nanti marketplace masuk ke:
+
+```
+Order
+Payment
+Inventory
+Seller
+Product
+Cart
+Transaction
+```
+
+kita akan membutuhkan transaction boundary yang jauh lebih jelas.
+
+---
+
+# Database design saat ini
+
+Untuk tahap sekarang database sangat minimal dan sehat:
+
+```
+users
+  │
+  │ 1:N
+  ▼
+auth_sessions
+```
+
+Belum ada entity marketplace seperti:
+
+```
+sellers
+products
+categories
+product_images
+inventory
+carts
+cart_items
+orders
+order_items
+payments
+addresses
+reviews
+```
+
+Dan menurut saya **jangan kita tambahkan semuanya sekaligus**.
+
+Fondasi auth sebaiknya diselesaikan dulu.
+
+---
+
+# Cara saya memahami repository ini
+
+Jadi kalau kita lanjut dari sini, saya akan menganggap architecture contract-nya seperti ini:
+
+```
+                    ┌─────────────────┐
+                    │    HTTP / Chi   │
+                    └────────┬────────┘
+                             │
+                       Handler Layer
+                             │
+                    ┌────────▼────────┐
+                    │  Auth / Domain  │
+                    │    Services     │
+                    └────────┬────────┘
+                             │
+                    Repository Interfaces
+                             │
+                    ┌────────▼────────┐
+                    │   Repository    │
+                    └────────┬────────┘
+                             │
+                          sqlc/db
+                             │
+                    ┌────────▼────────┐
+                    │   PostgreSQL    │
+                    └─────────────────┘
+```
+
+Sementara infrastructure:
+
+```
+config
+ ├── environment
+ ├── DB pool
+ ├── JWT configuration
+ └── CORS
+
+platform
+ ├── database
+ ├── password
+ └── token
+```
+
+Ini sudah cukup bagus sebagai starting architecture.
+
+---
+
+# State project yang saya pegang sekarang
+
+Kalau kita lanjut di message berikutnya, saya akan menganggap baseline kita adalah:
+
+```
+✅ Go project
+✅ PostgreSQL
+✅ pgxpool
+✅ Goose
+✅ sqlc
+✅ users table
+✅ auth_sessions table
+✅ User domain
+✅ AuthSession domain
+✅ Repository abstraction
+✅ User repository
+✅ Session repository
+✅ Argon2id
+✅ JWT access token
+✅ Random refresh token
+✅ Refresh token hashing
+✅ Login service
+✅ Login handler
+✅ Account status checking
+✅ Failed login tracking
+✅ 5-attempt / 15-minute lockout
+✅ HTTP server
+✅ Chi router
+✅ graceful shutdown
+
+❌ validator belum wired
+❌ auth middleware
+❌ refresh endpoint
+❌ logout
+❌ /me
+❌ register
+❌ email verification
+❌ password reset
+❌ marketplace domain
+```
+
+Jadi **saya sudah punya mental model repository-nya**, dan kita tidak perlu mengulang penjelasan architecture dari nol lagi.
+
+Menurut saya, langkah berikutnya yang paling tepat adalah **menyelesaikan authentication lifecycle terlebih dahulu**: `validator → JWT middleware → /me → refresh → logout`, baru setelah itu masuk ke **Register/User lifecycle** dan kemudian mulai membangun entity marketplace.
+
+## End
 
 # Refactor jwt.go ParseRefreshSessionID
 

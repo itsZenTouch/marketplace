@@ -5,15 +5,19 @@ import (
 	"errors"
 	"net"
 	"net/http"
+
+	"github.com/go-playground/validator/v10"
 )
 
 type Handler struct {
-	service *Service
+	service  *Service
+	validate *validator.Validate
 }
 
 func NewHandler(service *Service) *Handler {
 	return &Handler{
-		service: service,
+		service:  service,
+		validate: validator.New(),
 	}
 }
 
@@ -41,6 +45,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "invalid request body",
+		})
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request",
 		})
 		return
 	}

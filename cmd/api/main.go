@@ -63,7 +63,7 @@ func main() {
 
 	router := chi.NewRouter()
 
-	router.Post("api/auth/login", authHandler.Login)
+	router.Post("/api/auth/login", authHandler.Login)
 
 	server := &http.Server{
 		Addr:              ":" + cfg.AppPort,
