@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -10,9 +11,12 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 
 	"github.com/itsZenTouch/marketplace/internal/auth"
 	"github.com/itsZenTouch/marketplace/internal/config"
+	appmiddleware "github.com/itsZenTouch/marketplace/internal/middleware"
 	"github.com/itsZenTouch/marketplace/internal/platform/database"
 	"github.com/itsZenTouch/marketplace/internal/platform/password"
 	"github.com/itsZenTouch/marketplace/internal/platform/token"
@@ -24,6 +28,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("failled to load configuration: %v", err)
 	}
+
+	logger := slog.New(
+		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}),
+	)
 
 	ctx := context.Background()
 
@@ -62,6 +72,18 @@ func main() {
 	authHandler := auth.NewHandler(authService)
 
 	router := chi.NewRouter()
+
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(appmiddleware.Slogger(logger))
+	router.Use(middleware.Recoverer)
+	router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:5173"},
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
 
 	router.Post("/api/auth/login", authHandler.Login)
 
