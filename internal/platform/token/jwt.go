@@ -63,6 +63,10 @@ func (j *JWT) CreateAccessToken(userID uuid.UUID) (string, error) {
 		},
 	}
 
+	if claims.Issuer != j.issuer {
+		return uuid.Nil.String(), ErrInvalidToken
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 	return token.SignedString(j.secret)
@@ -111,6 +115,10 @@ func (j *JWT) ParseAccessToken(tokenString string) (uuid.UUID, error) {
 	}
 
 	if claims.Type != "access" {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	if claims.Issuer != j.issuer {
 		return uuid.Nil, ErrInvalidToken
 	}
 

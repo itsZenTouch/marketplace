@@ -37,6 +37,12 @@ type loginResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
+type MeResponse struct {
+	ID     string `json:"id"`
+	Email  string `json:"email"`
+	Status string `json:"status"`
+}
+
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -131,8 +137,19 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if user.ID != userID {
+		writeJSON(w, http.StatusNotFound, map[string]string{
+			"error": "user not found",
+		})
+	}
 
-	writeJSON(w, http.StatusOK, user)
+	response := MeResponse{
+		ID:     user.ID.String(),
+		Email:  user.Email,
+		Status: string(user.Status),
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }
 
 func writeJSON(

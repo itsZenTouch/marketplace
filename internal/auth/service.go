@@ -119,21 +119,37 @@ func (s *Service) Login(
 	}
 
 	if err := s.password.Compare(input.Password, user.PasswordHash); err != nil {
-		failedUser, _ := s.users.IncrementFailedLoginAttempts(
+		failedUser, err := s.users.IncrementFailedLoginAttempts(
 			ctx,
 			user.ID,
 		)
+		if err != nil {
+			s.logger.ErrorContext(
+				ctx,
+				"IncrementFailedLoginAttempts",
+				slog.Any("error", err),
+			)
+			return LoginOutput{}, errors.New("something went wrong")
+		}
 
 		const maxAttempts = 5
 
 		if failedUser.FailedLoginAttempts >= maxAttempts {
 			until := time.Now().Add(15 * time.Minute)
 
-			_, _ = s.users.LockUserUntil(
+			_, err = s.users.LockUserUntil(
 				ctx,
 				user.ID,
 				&until,
 			)
+			if err != nil {
+				slog.ErrorContext(
+					ctx,
+					"LockUserUntil",
+					slog.Any("error", err),
+				)
+				return LoginOutput{}, errors.New("someting went wrong")
+			}
 
 			s.logger.WarnContext(
 				ctx,
