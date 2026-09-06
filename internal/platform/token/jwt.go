@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 )
 
+var ErrInvalidToken = errors.New("invalid token")
+
 type JWT struct {
 	secret     []byte
 	issuer     string
@@ -86,6 +88,38 @@ func (j *JWT) CreateRefreshToken(sessionID uuid.UUID) (
 	hashString := hex.EncodeToString(hash[:])
 
 	return token, hashString, nil
+}
+
+func (j *JWT) ParseAccessToken(tokenString string) (uuid.UUID, error) {
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&AccessClaim{},
+		func(t *jwt.Token) (any, error) {
+			if t.Method != jwt.SigningMethodHS256 {
+				return nil, ErrInvalidToken
+			}
+			return []byte(j.secret), nil
+		},
+	)
+	if err != nil {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(*AccessClaim)
+	if !ok || !token.Valid {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	if claims.Type != "access" {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	userID, err := uuid.Parse(claims.UserID)
+	if err != nil {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	return userID, nil
 }
 
 func HashRefreshToken(token string) string {

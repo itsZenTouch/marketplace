@@ -65,6 +65,10 @@ func main() {
 
 	router.Post("/api/auth/login", authHandler.Login)
 
+	router.Group(func(r chi.Router) {
+		r.Use(auth.AuthMiddleware(jwtService))
+	})
+
 	server := &http.Server{
 		Addr:              ":" + cfg.AppPort,
 		Handler:           router,
