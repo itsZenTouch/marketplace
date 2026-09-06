@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type Service struct {
 	sessions repository.AuthSessionRepository
 	password *password.Hasher
 	token    *token.JWT
+	logger   *slog.Logger
 }
 
 func NewService(
@@ -34,12 +36,14 @@ func NewService(
 	sessions repository.AuthSessionRepository,
 	passwordHasher *password.Hasher,
 	jwt *token.JWT,
+	logger *slog.Logger,
 ) *Service {
 	return &Service{
 		users:    users,
 		sessions: sessions,
 		password: passwordHasher,
 		token:    jwt,
+		logger:   logger,
 	}
 }
 
@@ -72,20 +76,45 @@ func (s *Service) Login(
 			return LoginOutput{}, ErrInvalidCredentials
 		}
 
+		s.logger.ErrorContext(
+			ctx,
+			"failed to get user by email",
+			slog.Any("error", err),
+		)
+
 		return LoginOutput{}, err
 	}
 
 	now := time.Now()
 
 	if user.LockedUntil != nil && user.LockedUntil.After(now) {
+		s.logger.ErrorContext(
+			ctx,
+			"user login failed",
+			slog.String("user_id", user.ID.String()),
+			slog.String("reason", "account_locked"),
+		)
+
 		return LoginOutput{}, ErrAccountLocked
 	}
 
 	switch user.Status {
 	case domain.UserStatusSuspended:
+		s.logger.WarnContext(
+			ctx,
+			"user login failed",
+			slog.String("user_id", user.ID.String()),
+			slog.String("reason", "account_suspended"),
+		)
 		return LoginOutput{}, ErrAccountSuspended
 
 	case domain.UserStatusDisabled:
+		s.logger.WarnContext(
+			ctx,
+			"user login failed",
+			slog.String("user_id", user.ID.String()),
+			slog.String("reason", "account_disabled"),
+		)
 		return LoginOutput{}, ErrAccountDisabled
 	}
 
@@ -104,6 +133,14 @@ func (s *Service) Login(
 				ctx,
 				user.ID,
 				&until,
+			)
+
+			s.logger.WarnContext(
+				ctx,
+				"user login failed",
+				slog.String("user_id", user.ID.String()),
+				slog.String("reason", "account_locked"),
+				slog.Time("locked_until", until),
 			)
 		}
 
@@ -142,9 +179,26 @@ func (s *Service) Login(
 		return LoginOutput{}, err
 	}
 
+	s.logger.InfoContext(
+		ctx,
+		"user login succeeded",
+		slog.String("user_id", user.ID.String()),
+	)
+
 	return LoginOutput{
 		User:         user,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	}, nil
+}
+
+func (s *Service) GetMe(
+	ctx context.Context,
+	userID uuid.UUID,
+) (domain.User, error) {
+	s.logger.InfoContext(ctx,
+		"get user status succeeded",
+		slog.String("user_id", userID.String()))
+
+	return s.users.GetUserByID(ctx, userID)
 }

@@ -56,17 +56,12 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := net.ParseIP(r.RemoteAddr)
-
-	if ip == nil {
-		// Remove port if RemoteAddr is "IP:PORT".
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err == nil {
-			ip = net.ParseIP(host)
-		} else {
-			ip = net.ParseIP(r.RemoteAddr)
-		}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
 	}
+
+	ip := net.ParseIP(host)
 
 	result, err := h.service.Login(
 		r.Context(),
@@ -129,7 +124,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.users.GetUserByID(r.Context(), userID)
+	user, err := h.service.GetMe(r.Context(), userID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "internal server error",

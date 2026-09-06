@@ -3185,11 +3185,11 @@ Kalau kita lanjut di message berikutnya, saya akan menganggap baseline kita adal
 ✅ Chi router
 ✅ graceful shutdown
 
-❌ validator belum wired
-❌ auth middleware
+✅ validator sudah wired
+❔ auth middleware
 ❌ refresh endpoint
 ❌ logout
-❌ /me
+✅ /me
 ❌ register
 ❌ email verification
 ❌ password reset

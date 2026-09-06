@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,16 +23,22 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("failled to load configuration: %v", err)
-	}
-
 	logger := slog.New(
 		slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 		}),
 	)
+
+	slog.SetDefault(logger)
+
+	cfg, err := config.Load()
+	if err != nil {
+		logger.Error(
+			"failed to load configuration",
+			slog.Any("error", err),
+		)
+		os.Exit(1)
+	}
 
 	ctx := context.Background()
 
@@ -44,7 +49,11 @@ func main() {
 		MaxConnIdleTime: cfg.DBMaxConnIdleTime,
 	})
 	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
+		logger.Error(
+			"failed to connect to database",
+			slog.Any("error", err),
+		)
+		os.Exit(1)
 	}
 
 	defer dbPool.Close()
@@ -67,6 +76,7 @@ func main() {
 		sessionRepository,
 		passwordHasher,
 		jwtService,
+		logger,
 	)
 
 	authHandler := auth.NewHandler(authService)
@@ -74,9 +84,9 @@ func main() {
 	router := chi.NewRouter()
 
 	router.Use(middleware.RequestID)
-	router.Use(middleware.RealIP)
+	router.Use(appmiddleware.RealIP)
 	router.Use(appmiddleware.Slogger(logger))
-	router.Use(middleware.Recoverer)
+	router.Use(appmiddleware.Recoverer)
 	router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"http://localhost:5173"},
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
@@ -100,23 +110,21 @@ func main() {
 	}
 
 	go func() {
-		log.Printf(
-			"marketplace API listening on port %s",
-			cfg.AppPort,
-		)
-
 		if err := server.ListenAndServe(); err != nil &&
 			err != http.ErrServerClosed {
-			log.Fatalf("server failed: %v", err)
+			logger.Error(
+				"server failed:",
+				slog.Any("error", err),
+			)
 		}
 	}()
 
-	log.Println("database connection successfully")
+	logger.Info("database connected")
 
-	log.Printf(
-		"marketplace API starting on port %s (%s)",
-		cfg.AppPort,
-		cfg.AppEnv,
+	logger.Info(
+		"marketplace API starting",
+		slog.String("port", cfg.AppPort),
+		slog.String("env", cfg.AppEnv),
 	)
 
 	stop := make(chan os.Signal, 1)
@@ -124,7 +132,7 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	log.Println("shutdown signal received")
+	logger.Info("shutdown signal received")
 
 	shutdownCtx, cancel := context.WithTimeout(
 		context.Background(),
@@ -133,8 +141,9 @@ func main() {
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Printf("server shutdown failed: %v", err)
+		logger.Error("server shutdown failed:",
+			slog.Any("error", err))
 	}
 
-	log.Println("server stopped")
+	logger.Info("server stopped")
 }
