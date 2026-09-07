@@ -13,6 +13,7 @@ func userToDomain(user db.User) domain.User {
 	return domain.User{
 		ID:                  user.ID,
 		Email:               user.Email,
+		PasswordHash:        user.PasswordHash,
 		Status:              domain.UserStatus(user.Status),
 		EmailVerifiedAt:     timestamptzPtr(user.EmailVerifiedAt),
 		FailedLoginAttempts: int(user.FailedLoginAttempts),

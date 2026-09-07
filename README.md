@@ -62,3 +62,9 @@ Generated code:
 
 Do not edit generated files manually.
 Update SQL queries/schema and run sqlc generate again.
+
+## Run all test
+
+```bash
+RUN_DB_TESTS=1 DATABASE_URL="$DATABASE_URL" go test ./... -v
+```

@@ -61,6 +61,7 @@ func main() {
 	repo := repository.NewRepository(dbPool)
 
 	userRepository := repository.NewUserRepository(dbPool)
+	sessionRepository := repository.NewAuthSessionRepository(dbPool)
 
 	passwordHasher := password.NewHasher()
 
@@ -73,6 +74,7 @@ func main() {
 
 	authService := auth.NewService(
 		userRepository,
+		sessionRepository,
 		repo,
 		passwordHasher,
 		jwtService,
@@ -95,6 +97,8 @@ func main() {
 		MaxAge:           300,
 	}))
 
+	router.Post("/api/auth/logout", authHandler.Logout)
+	router.Post("/api/auth/refresh", authHandler.Refresh)
 	router.Post("/api/auth/login", authHandler.Login)
 
 	router.Group(func(r chi.Router) {

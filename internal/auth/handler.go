@@ -43,6 +43,18 @@ type MeResponse struct {
 	Status string `json:"status"`
 }
 
+type refreshRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required,max=512"`
+}
+
+type refreshResponse struct {
+	AccessToken string `json:"access_token"`
+}
+
+type logoutRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -162,4 +174,104 @@ func writeJSON(
 	w.WriteHeader(status)
 
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	var req refreshRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request body",
+		})
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request",
+		})
+		return
+	}
+
+	result, err := h.service.Refresh(
+		r.Context(),
+		RefreshInput{
+			RefreshToken: req.RefreshToken,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidRefreshToken):
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "invalid refresh token",
+			})
+
+		case errors.Is(err, ErrAccountSuspended):
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "account suspended",
+			})
+
+		case errors.Is(err, ErrAccountDisabled):
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "account disabled",
+			})
+
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "internal server error",
+			})
+		}
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, refreshResponse{
+		AccessToken: result.AccessToken,
+	})
+}
+
+func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	var req logoutRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request body",
+		})
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request",
+		})
+		return
+	}
+
+	err := h.service.Logout(
+		r.Context(),
+		LogoutInput{
+			RefreshToken: req.RefreshToken,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidRefreshToken):
+			writeJSON(w, http.StatusUnauthorized, map[string]string{
+				"error": "invalid refresh token",
+			})
+
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "internal server error",
+			})
+		}
+
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

@@ -77,6 +77,11 @@ type AuthSessionRepository interface {
 		id uuid.UUID,
 	) (domain.AuthSession, error)
 
+	GetActiveAuthSessionByID(
+		ctx context.Context,
+		id uuid.UUID,
+	) (domain.AuthSession, error)
+
 	RevokeAuthSession(
 		ctx context.Context,
 		id uuid.UUID,

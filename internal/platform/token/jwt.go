@@ -38,8 +38,7 @@ func NewJWT(
 }
 
 type AccessClaim struct {
-	UserID string `json:"uid"`
-	Type   string `json:"type"`
+	Type string `json:"type"`
 
 	jwt.RegisteredClaims
 }
@@ -52,8 +51,7 @@ func (j *JWT) CreateAccessToken(userID uuid.UUID) (string, error) {
 	now := time.Now()
 
 	claims := AccessClaim{
-		UserID: userID.String(),
-		Type:   "access",
+		Type: "access",
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.New().String(),
 			Subject:   userID.String(),
@@ -98,6 +96,7 @@ func (j *JWT) ParseAccessToken(tokenString string) (uuid.UUID, error) {
 			if t.Method != jwt.SigningMethodHS256 {
 				return nil, ErrInvalidToken
 			}
+
 			return []byte(j.secret), nil
 		},
 	)
@@ -118,7 +117,15 @@ func (j *JWT) ParseAccessToken(tokenString string) (uuid.UUID, error) {
 		return uuid.Nil, ErrInvalidToken
 	}
 
-	userID, err := uuid.Parse(claims.UserID)
+	if claims.Subject == "" {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	if claims.ExpiresAt == nil {
+		return uuid.Nil, ErrInvalidToken
+	}
+
+	userID, err := uuid.Parse(claims.Subject)
 	if err != nil {
 		return uuid.Nil, ErrInvalidToken
 	}

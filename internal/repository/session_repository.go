@@ -61,6 +61,20 @@ func (r *authSessionRepository) GetAuthSessionByID(
 	return authSessionToDomain(session), nil
 }
 
+func (r *authSessionRepository) GetActiveAuthSessionByID(
+	ctx context.Context,
+	id uuid.UUID,
+) (domain.AuthSession, error) {
+	queries := db.New(r.db)
+
+	session, err := queries.GetActiveAuthSessionByID(ctx, id)
+	if err != nil {
+		return domain.AuthSession{}, err
+	}
+
+	return authSessionToDomain(session), nil
+}
+
 func (r *authSessionRepository) RevokeAuthSession(
 	ctx context.Context,
 	id uuid.UUID,

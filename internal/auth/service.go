@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"log/slog"
 	"net"
@@ -17,14 +18,16 @@ import (
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrAccountSuspended   = errors.New("account suspended")
-	ErrAccountDisabled    = errors.New("account disabled")
-	ErrAccountLocked      = errors.New("account temporarily locked")
+	ErrInvalidCredentials  = errors.New("invalid credentials")
+	ErrAccountSuspended    = errors.New("account suspended")
+	ErrAccountDisabled     = errors.New("account disabled")
+	ErrAccountLocked       = errors.New("account temporarily locked")
+	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 )
 
 type Service struct {
 	users    repository.UserRepository
+	sessions repository.AuthSessionRepository
 	uow      repository.UnitOfWorkManager
 	password *password.Hasher
 	token    *token.JWT
@@ -33,6 +36,7 @@ type Service struct {
 
 func NewService(
 	users repository.UserRepository,
+	sessions repository.AuthSessionRepository,
 	uow repository.UnitOfWorkManager,
 	passwordHasher *password.Hasher,
 	jwt *token.JWT,
@@ -40,6 +44,7 @@ func NewService(
 ) *Service {
 	return &Service{
 		users:    users,
+		sessions: sessions,
 		uow:      uow,
 		password: passwordHasher,
 		token:    jwt,
@@ -57,6 +62,18 @@ type LoginInput struct {
 type LoginOutput struct {
 	User         domain.User
 	AccessToken  string
+	RefreshToken string
+}
+
+type RefreshInput struct {
+	RefreshToken string
+}
+
+type RefreshOutput struct {
+	AccessToken string
+}
+
+type LogoutInput struct {
 	RefreshToken string
 }
 
@@ -105,11 +122,13 @@ func (s *Service) Login(
 		user.PasswordHash,
 	)
 
+	var failedUser domain.User
+
 	if passwordErr != nil {
 		err := s.uow.WithTx(ctx, func(uow repository.UnitOfWork) error {
 			users := uow.Users()
 
-			failedUser, err := users.RegisterFailedLogin(
+			failedUser, err = users.RegisterFailedLogin(
 				ctx,
 				user.ID,
 			)
@@ -120,11 +139,6 @@ func (s *Service) Login(
 					slog.Any("RegisterFailedLogin", err),
 				)
 				return err
-			}
-
-			if failedUser.LockedUntil != nil &&
-				failedUser.LockedUntil.After(now) {
-				return ErrAccountLocked
 			}
 
 			return nil
@@ -140,6 +154,11 @@ func (s *Service) Login(
 			return LoginOutput{}, err
 		}
 
+		if failedUser.LockedUntil != nil &&
+			failedUser.LockedUntil.After(now) {
+			return LoginOutput{}, ErrAccountLocked
+		}
+
 		return LoginOutput{}, ErrInvalidCredentials
 	}
 
@@ -149,6 +168,13 @@ func (s *Service) Login(
 		users := uow.Users()
 		sessions := uow.AuthSessions()
 
+		s.logger.InfoContext(
+			ctx,
+			"resetting failed login attempts",
+			slog.String("user_id", user.ID.String()),
+			slog.Int("failed_login_attempts", user.FailedLoginAttempts),
+		)
+
 		user, err = users.ResetFailedLoginAttempts(
 			ctx,
 			user.ID,
@@ -156,7 +182,14 @@ func (s *Service) Login(
 		)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return ErrInvalidCredentials
+				s.logger.ErrorContext(
+					ctx,
+					"reset failed login attempts returned no rows",
+					slog.String("user_id", user.ID.String()),
+					slog.Int("failed_login_attempts", user.FailedLoginAttempts),
+				)
+
+				return err
 			}
 
 			s.logger.ErrorContext(
@@ -224,4 +257,137 @@ func (s *Service) GetMe(
 		slog.String("user_id", userID.String()))
 
 	return s.users.GetUserByID(ctx, userID)
+}
+
+func (s *Service) Refresh(
+	ctx context.Context,
+	input RefreshInput,
+) (RefreshOutput, error) {
+	refreshToken := strings.TrimSpace(input.RefreshToken)
+
+	if refreshToken == "" {
+		return RefreshOutput{}, ErrInvalidRefreshToken
+	}
+
+	sessionID, err := token.ParseRefreshSessionID(refreshToken)
+	if err != nil {
+		return RefreshOutput{}, ErrInvalidRefreshToken
+	}
+
+	session, err := s.sessions.GetActiveAuthSessionByID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RefreshOutput{}, ErrInvalidRefreshToken
+		}
+
+		s.logger.ErrorContext(
+			ctx,
+			"failed to get active auth session",
+			slog.String("session_id", sessionID.String()),
+			slog.Any("error", err),
+		)
+
+		return RefreshOutput{}, err
+	}
+
+	providedHash := token.HashRefreshToken(refreshToken)
+
+	if subtle.ConstantTimeCompare(
+		[]byte(providedHash),
+		[]byte(session.RefreshTokenHash),
+	) != 1 {
+		return RefreshOutput{}, ErrInvalidRefreshToken
+	}
+
+	user, err := s.users.GetUserByID(ctx, session.UserID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RefreshOutput{}, ErrInvalidRefreshToken
+		}
+
+		return RefreshOutput{}, err
+	}
+
+	switch user.Status {
+	case domain.UserStatusSuspended:
+		return RefreshOutput{}, ErrAccountSuspended
+
+	case domain.UserStatusDisabled:
+		return RefreshOutput{}, ErrAccountDisabled
+	}
+
+	accessToken, err := s.token.CreateAccessToken(user.ID)
+	if err != nil {
+		return RefreshOutput{}, err
+	}
+
+	return RefreshOutput{
+		AccessToken: accessToken,
+	}, nil
+}
+
+func (s *Service) Logout(
+	ctx context.Context,
+	input LogoutInput,
+) error {
+	refreshToken := strings.TrimSpace(input.RefreshToken)
+
+	if refreshToken == "" {
+		return ErrInvalidRefreshToken
+	}
+
+	sessionID, err := token.ParseRefreshSessionID(refreshToken)
+	if err != nil {
+		return ErrInvalidRefreshToken
+	}
+
+	session, err := s.sessions.GetActiveAuthSessionByID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidRefreshToken
+		}
+
+		s.logger.ErrorContext(
+			ctx,
+			"failed to get active auth session",
+			slog.String("session_id", sessionID.String()),
+			slog.Any("error", err),
+		)
+
+		return err
+	}
+
+	providedHash := token.HashRefreshToken(refreshToken)
+
+	if subtle.ConstantTimeCompare(
+		[]byte(providedHash),
+		[]byte(session.RefreshTokenHash),
+	) != 1 {
+		return ErrInvalidRefreshToken
+	}
+
+	_, err = s.sessions.RevokeAuthSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidRefreshToken
+		}
+
+		s.logger.ErrorContext(
+			ctx,
+			"failed to revoke auth session",
+			slog.String("session_id", sessionID.String()),
+			slog.Any("error", err),
+		)
+
+		return err
+	}
+
+	s.logger.InfoContext(
+		ctx,
+		"user logged out",
+		slog.String("session_id", sessionID.String()),
+		slog.String("user_id", session.UserID.String()),
+	)
+
+	return nil
 }
