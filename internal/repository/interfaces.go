@@ -27,8 +27,15 @@ type CreateAuthSessionInput struct {
 }
 
 type UnitOfWork interface {
-	Users() *userRepository
-	AuthSessions() *authSessionRepository
+	Users() UserRepository
+	AuthSessions() AuthSessionRepository
+}
+
+type UnitOfWorkManager interface {
+	WithTx(
+		ctx context.Context,
+		fn func(UnitOfWork) error,
+	) error
 }
 
 type UserRepository interface {

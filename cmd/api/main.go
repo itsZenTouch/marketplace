@@ -58,9 +58,9 @@ func main() {
 
 	defer dbPool.Close()
 
-	userRepository := repository.NewUserRepository(dbPool)
+	repo := repository.NewRepository(dbPool)
 
-	sessionRepository := repository.NewAuthSessionRepository(dbPool)
+	userRepository := repository.NewUserRepository(dbPool)
 
 	passwordHasher := password.NewHasher()
 
@@ -73,7 +73,7 @@ func main() {
 
 	authService := auth.NewService(
 		userRepository,
-		sessionRepository,
+		repo,
 		passwordHasher,
 		jwtService,
 		logger,

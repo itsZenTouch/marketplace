@@ -44,7 +44,7 @@ func TestRepositoryTransaction(t *testing.T) {
 		userID := uuid.New()
 		email := "repository-commit-" + userID.String() + "@example.com"
 
-		err := repo.RepoWithTx(ctx, func(uow UnitOfWork) error {
+		err := repo.WithTx(ctx, func(uow UnitOfWork) error {
 			_, err := uow.Users().CreateUser(ctx, CreateUserInput{
 				ID:           userID,
 				Email:        email,
@@ -89,7 +89,7 @@ func TestRepositoryTransaction(t *testing.T) {
 
 		expectedErr := context.Canceled
 
-		err := repo.RepoWithTx(ctx, func(uow UnitOfWork) error {
+		err := repo.WithTx(ctx, func(uow UnitOfWork) error {
 			_, err := uow.Users().CreateUser(ctx, CreateUserInput{
 				ID:           userID,
 				Email:        email,

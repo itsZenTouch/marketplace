@@ -3219,3 +3219,35 @@ func ParseRefreshSessionID(refreshToken string) (uuid.UUID, error) {
 	return id, nil
 }
 ```
+---
+## Kondisi setelah refactor UnitOfWork
+```go
+cmd/api/main.go
+       │
+       ├── pgxpool
+       │
+       ├── Repository
+       │      └── WithTx()
+       │
+       └── AuthService
+              │
+              ├── UserRepository
+              │
+              └── UnitOfWorkManager
+                         │
+                         ▼
+                     WithTx()
+                         │
+                         ▼
+                    txUnitOfWork
+                     /       \
+                    /         \
+                   ▼           ▼
+              UserRepo      SessionRepo
+                   \           /
+                    \         /
+                       pgx.Tx
+                         │
+                         ▼
+                     PostgreSQL
+```
