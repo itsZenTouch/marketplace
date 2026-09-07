@@ -473,3 +473,172 @@ func TestServiceRefresh_InvalidToken(t *testing.T) {
 		)
 	}
 }
+
+func TestServiceLogout(t *testing.T) {
+	if os.Getenv("RUN_DB_TESTS") != "1" {
+		t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("DATABASE_URL is required")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	repo := repository.NewRepository(pool)
+	userRepo := repository.NewUserRepository(pool)
+	sessionRepo := repository.NewAuthSessionRepository(pool)
+
+	passwordHasher := password.NewHasher()
+
+	passwordHash, err := passwordHasher.Hash("correct-password")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	userID := uuid.New()
+	email := "auth-logout-" + userID.String() + "@example.com"
+
+	_, err = userRepo.CreateUser(ctx, repository.CreateUserInput{
+		ID:           userID,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Status:       domain.UserStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+
+	defer func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM users WHERE id = $1",
+			userID,
+		)
+		if err != nil {
+			t.Errorf("cleanup user: %v", err)
+		}
+	}()
+
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	service := NewService(
+		userRepo,
+		sessionRepo,
+		repo,
+		passwordHasher,
+		jwt,
+		slog.Default(),
+	)
+
+	sessionID := uuid.New()
+
+	refreshToken, refreshTokenHash, err := jwt.CreateRefreshToken(sessionID)
+	if err != nil {
+		t.Fatalf("create refresh token: %v", err)
+	}
+
+	_, err = sessionRepo.CreateAuthSession(
+		ctx,
+		repository.CreateAuthSessionInput{
+			ID:               sessionID,
+			UserID:           userID,
+			RefreshTokenHash: refreshTokenHash,
+			UserAgent:        "test-agent",
+			IPAddress:        net.ParseIP("127.0.0.1"),
+			ExpiresAt:        time.Now().UTC().Add(24 * time.Hour),
+		},
+	)
+	if err != nil {
+		t.Fatalf("create auth session: %v", err)
+	}
+
+	err = service.Logout(ctx, LogoutInput{
+		RefreshToken: refreshToken,
+	})
+	if err != nil {
+		t.Fatalf("Logout: %v", err)
+	}
+
+	session, err := sessionRepo.GetAuthSessionByID(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("get auth session after logout: %v", err)
+	}
+
+	if session.RevokedAt == nil {
+		t.Fatal("revoked_at = nil, want non-nil")
+	}
+
+	// The same refresh token must no longer work.
+	err = service.Logout(ctx, LogoutInput{
+		RefreshToken: refreshToken,
+	})
+	if !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Fatalf(
+			"second Logout error = %v, want %v",
+			err,
+			ErrInvalidRefreshToken,
+		)
+	}
+}
+
+func TestServiceLogout_InvalidToken(t *testing.T) {
+	service := &Service{}
+
+	tests := []struct {
+		name  string
+		token string
+	}{
+		{
+			name:  "empty",
+			token: "",
+		},
+		{
+			name:  "malformed",
+			token: "not-a-refresh-token",
+		},
+		{
+			name:  "invalid-session-id",
+			token: "not-a-uuid.random-token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.Logout(
+				context.Background(),
+				LogoutInput{
+					RefreshToken: tt.token,
+				},
+			)
+
+			if !errors.Is(err, ErrInvalidRefreshToken) {
+				t.Fatalf(
+					"error = %v, want %v",
+					err,
+					ErrInvalidRefreshToken,
+				)
+			}
+		})
+	}
+}
