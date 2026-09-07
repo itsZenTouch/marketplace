@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/itsZenTouch/marketplace/internal/domain"
@@ -245,6 +247,306 @@ func TestHandlerRefresh_InvalidJSON(t *testing.T) {
 			"status = %d, want %d",
 			rec.Code,
 			http.StatusBadRequest,
+		)
+	}
+}
+
+func TestHandlerLogout(t *testing.T) {
+	if os.Getenv("RUN_DB_TESTS") != "1" {
+		t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("DATABASE_URL is required")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	repo := repository.NewRepository(pool)
+	authSessionRepo := repository.NewAuthSessionRepository(pool)
+	userRepo := repository.NewUserRepository(pool)
+
+	passwordHasher := password.NewHasher()
+
+	passwordHash, err := passwordHasher.Hash("correct-password")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	userID := uuid.New()
+	email := "handler-logout-" + userID.String() + "@example.com"
+
+	_, err = userRepo.CreateUser(ctx, repository.CreateUserInput{
+		ID:           userID,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Status:       domain.UserStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+
+	defer func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM users WHERE id = $1",
+			userID,
+		)
+		if err != nil {
+			t.Errorf("cleanup user: %v", err)
+		}
+	}()
+
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	service := NewService(
+		userRepo,
+		authSessionRepo,
+		repo,
+		passwordHasher,
+		jwt,
+		slog.Default(),
+	)
+
+	handler := NewHandler(service)
+
+	// Login first so we get a real refresh token.
+	loginReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/login",
+		strings.NewReader(`{
+			"email":"`+email+`",
+			"password":"correct-password"
+		}`),
+	)
+	loginReq.Header.Set("Content-Type", "application/json")
+
+	loginRec := httptest.NewRecorder()
+
+	handler.Login(loginRec, loginReq)
+
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf(
+			"logout status = %d, want %d; body=%s",
+			loginRec.Code,
+			http.StatusOK,
+			loginRec.Body.String(),
+		)
+	}
+
+	var loginResult struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	if err := json.Unmarshal(
+		loginRec.Body.Bytes(),
+		&loginResult,
+	); err != nil {
+		t.Fatalf("decode login response: %v", err)
+	}
+
+	if loginResult.RefreshToken == "" {
+		t.Fatal("refresh token is empty")
+	}
+
+	// Logout using the refresh token.
+	logoutBody := `{"refresh_token":"` +
+		loginResult.RefreshToken +
+		`"}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/logout",
+		strings.NewReader(logoutBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+
+	handler.Logout(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"logout status = %d, want %d; body=%s",
+			rec.Code,
+			http.StatusNoContent,
+			rec.Body.String(),
+		)
+	}
+
+	// Verify that the session is no longer active.
+	sessionID, err := token.ParseRefreshSessionID(
+		loginResult.RefreshToken,
+	)
+	if err != nil {
+		t.Fatalf("parse refresh token: %v", err)
+	}
+
+	_, err = authSessionRepo.GetActiveAuthSessionByID(ctx, sessionID)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf(
+			"GetActiveAuthSessionByID error = %v, want pgx.ErrNoRows",
+			err,
+		)
+	}
+}
+
+func TestHandlerLogout_InvalidRequest(t *testing.T) {
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	service := NewService(
+		nil,
+		nil,
+		nil,
+		password.NewHasher(),
+		jwt,
+		slog.Default(),
+	)
+
+	handler := NewHandler(service)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "empty",
+			body: `{"refresh_token":""}`,
+		},
+		{
+			name: "missing",
+			body: `{}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/auth/logout",
+				strings.NewReader(tt.body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			rec := httptest.NewRecorder()
+
+			handler.Logout(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf(
+					"status = %d, want %d; body=%s",
+					rec.Code,
+					http.StatusBadRequest,
+					rec.Body.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestHandlerLogout_InvalidToken(t *testing.T) {
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	service := NewService(
+		nil,
+		nil,
+		nil,
+		password.NewHasher(),
+		jwt,
+		slog.Default(),
+	)
+
+	handler := NewHandler(service)
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "malformed",
+			body: `{"refresh_token":"not-a-refresh-token"}`,
+		},
+		{
+			name: "invalid-session-id",
+			body: `{"refresh_token":"not-a-uuid.random-token"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/auth/logout",
+				strings.NewReader(tt.body),
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			rec := httptest.NewRecorder()
+
+			handler.Logout(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf(
+					"status = %d, want %d; body=%s",
+					rec.Code,
+					http.StatusUnauthorized,
+					rec.Body.String(),
+				)
+			}
+		})
+	}
+}
+
+func TestHandlerSessions_Unauthorized(t *testing.T) {
+	service := &Service{}
+
+	handler := NewHandler(service)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/sessions",
+		nil,
+	)
+
+	rec := httptest.NewRecorder()
+
+	handler.Sessions(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
 		)
 	}
 }

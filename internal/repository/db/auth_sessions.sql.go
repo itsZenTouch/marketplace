@@ -224,3 +224,54 @@ func (q *Queries) RevokeAuthSession(ctx context.Context, id uuid.UUID) (AuthSess
 	)
 	return i, err
 }
+
+const rotateAuthSession = `-- name: RotateAuthSession :one
+UPDATE auth_sessions
+SET
+    refresh_token_hash = $1,
+    expires_at = $2,
+    updated_at = NOW()
+WHERE id = $3
+  AND revoked_at IS NULL
+  AND expires_at > NOW()
+  AND refresh_token_hash = $4
+RETURNING
+    id,
+    user_id,
+    refresh_token_hash,
+    user_agent,
+    ip_address,
+    expires_at,
+    revoked_at,
+    created_at,
+    updated_at
+`
+
+type RotateAuthSessionParams struct {
+	NewRefreshTokenHash     string    `json:"new_refresh_token_hash"`
+	ExpiresAt               time.Time `json:"expires_at"`
+	ID                      uuid.UUID `json:"id"`
+	CurrentRefreshTokenHash string    `json:"current_refresh_token_hash"`
+}
+
+func (q *Queries) RotateAuthSession(ctx context.Context, arg RotateAuthSessionParams) (AuthSession, error) {
+	row := q.db.QueryRow(ctx, rotateAuthSession,
+		arg.NewRefreshTokenHash,
+		arg.ExpiresAt,
+		arg.ID,
+		arg.CurrentRefreshTokenHash,
+	)
+	var i AuthSession
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.RefreshTokenHash,
+		&i.UserAgent,
+		&i.IpAddress,
+		&i.ExpiresAt,
+		&i.RevokedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

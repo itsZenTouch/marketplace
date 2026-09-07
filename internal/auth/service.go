@@ -70,11 +70,16 @@ type RefreshInput struct {
 }
 
 type RefreshOutput struct {
-	AccessToken string
+	AccessToken  string
+	RefreshToken string
 }
 
 type LogoutInput struct {
 	RefreshToken string
+}
+
+type SessionsOutput struct {
+	Sessions []domain.AuthSession
 }
 
 func (s *Service) Login(
@@ -316,13 +321,46 @@ func (s *Service) Refresh(
 		return RefreshOutput{}, ErrAccountDisabled
 	}
 
+	newSessionID := uuid.New()
+
+	newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(newSessionID)
+	if err != nil {
+		return RefreshOutput{}, err
+	}
+
+	newExpiresAt := time.Now().UTC().Add(s.token.RefreshTTL())
+
+	_, err = s.sessions.RotateAuthSession(
+		ctx,
+		sessionID,
+		newRefreshTokenHash,
+		newExpiresAt,
+		providedHash,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Someone already rotated/revoked this session.
+			return RefreshOutput{}, ErrInvalidRefreshToken
+		}
+
+		s.logger.ErrorContext(
+			ctx,
+			"failed to rotate auth session",
+			slog.String("session_id", sessionID.String()),
+			slog.Any("error", err),
+		)
+
+		return RefreshOutput{}, err
+	}
+
 	accessToken, err := s.token.CreateAccessToken(user.ID)
 	if err != nil {
 		return RefreshOutput{}, err
 	}
 
 	return RefreshOutput{
-		AccessToken: accessToken,
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
 	}, nil
 }
 
@@ -390,4 +428,23 @@ func (s *Service) Logout(
 	)
 
 	return nil
+}
+
+func (s *Service) ListSessions(
+	ctx context.Context,
+	userID uuid.UUID,
+) ([]domain.AuthSession, error) {
+	sessions, err := s.sessions.ListAuthSessionsByUserID(ctx, userID)
+	if err != nil {
+		s.logger.ErrorContext(
+			ctx,
+			"failed to list auth sessions",
+			slog.String("user_id", userID.String()),
+			slog.Any("error", err),
+		)
+
+		return nil, err
+	}
+
+	return sessions, nil
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -48,11 +49,24 @@ type refreshRequest struct {
 }
 
 type refreshResponse struct {
-	AccessToken string `json:"access_token"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type logoutRequest struct {
 	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+type sessionResponse struct {
+	ID        string     `json:"id"`
+	UserAgent string     `json:"user_agent"`
+	IPAddress string     `json:"ip_address"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
+type sessionsResponse struct {
+	Sessions []sessionResponse `json:"sessions"`
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +242,8 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, refreshResponse{
-		AccessToken: result.AccessToken,
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
 	})
 }
 
@@ -274,4 +289,50 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) Sessions(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{
+			"error": "unauthorized",
+		})
+		return
+	}
+
+	sessions, err := h.service.ListSessions(
+		r.Context(),
+		userID,
+	)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "internal server error",
+		})
+		return
+	}
+
+	response := sessionsResponse{
+		Sessions: make([]sessionResponse, 0, len(sessions)),
+	}
+
+	for _, session := range sessions {
+		ipAddress := ""
+
+		if session.IPAddress != nil {
+			ipAddress = session.IPAddress.String()
+		}
+
+		response.Sessions = append(
+			response.Sessions,
+			sessionResponse{
+				ID:        session.ID.String(),
+				UserAgent: session.UserAgent,
+				IPAddress: ipAddress,
+				ExpiresAt: session.ExpiresAt,
+				RevokedAt: session.RevokedAt,
+			},
+		)
+	}
+
+	writeJSON(w, http.StatusOK, response)
 }

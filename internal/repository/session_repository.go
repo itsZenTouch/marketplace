@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -107,4 +108,29 @@ func (r *authSessionRepository) ListAuthSessionsByUserID(
 	}
 
 	return result, nil
+}
+
+func (r *authSessionRepository) RotateAuthSession(
+	ctx context.Context,
+	id uuid.UUID,
+	newRefreshTokenHash string,
+	expiresAt time.Time,
+	expectedRefreshTokenHash string,
+) (domain.AuthSession, error) {
+	queries := db.New(r.db)
+
+	session, err := queries.RotateAuthSession(
+		ctx,
+		db.RotateAuthSessionParams{
+			ID:                      id,
+			NewRefreshTokenHash:     newRefreshTokenHash,
+			ExpiresAt:               expiresAt,
+			CurrentRefreshTokenHash: expectedRefreshTokenHash,
+		},
+	)
+	if err != nil {
+		return domain.AuthSession{}, err
+	}
+
+	return authSessionToDomain(session), nil
 }

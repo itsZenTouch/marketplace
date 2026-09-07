@@ -91,4 +91,12 @@ type AuthSessionRepository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 	) ([]domain.AuthSession, error)
+
+	RotateAuthSession(
+		ctx context.Context,
+		id uuid.UUID,
+		newRefreshTokenHash string,
+		expiresAt time.Time,
+		expectedRefreshTokenHash string,
+	) (domain.AuthSession, error)
 }

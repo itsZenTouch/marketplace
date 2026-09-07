@@ -105,6 +105,7 @@ func main() {
 		r.Use(auth.AuthMiddleware(jwtService))
 
 		r.Get("/api/auth/me", authHandler.Me)
+		r.Get("/api/auth/sessions", authHandler.Sessions)
 	})
 
 	server := &http.Server{
