@@ -3251,3 +3251,46 @@ cmd/api/main.go
                          ▼
                      PostgreSQL
 ```
+
+---
+## flow login
+```
+                  LOGIN
+                    │
+                    ▼
+             GetUserByEmail
+                    │
+                    ▼
+            Check account status
+                    │
+                    ▼
+             Check LockedUntil
+                    │
+             ┌──────┴──────┐
+             │             │
+           locked       unlocked
+             │             │
+             ▼             ▼
+      ErrAccountLocked  Compare Password
+                           │
+                    ┌──────┴──────┐
+                    │             │
+                  salah          benar
+                    │             │
+                    ▼             ▼
+          RegisterFailedLogin  ResetFailedLogin
+                    │             │
+                    ▼             ▼
+             attempts + 1    attempts = 0
+                    │             │
+                    ▼             ▼
+               lock >= 5?    Create Session
+                    │             │
+              ┌─────┴─────┐       ▼
+              │           │    Tokens
+             YES          NO       │
+              │           │       ▼
+              ▼           ▼     SUCCESS
+        ErrAccountLocked  InvalidCredentials
+
+```

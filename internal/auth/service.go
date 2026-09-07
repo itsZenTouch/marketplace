@@ -109,27 +109,22 @@ func (s *Service) Login(
 		err := s.uow.WithTx(ctx, func(uow repository.UnitOfWork) error {
 			users := uow.Users()
 
-			failedUser, err := users.IncrementFailedLoginAttempts(
+			failedUser, err := users.RegisterFailedLogin(
 				ctx,
 				user.ID,
 			)
 			if err != nil {
+				s.logger.ErrorContext(
+					ctx,
+					"internal error",
+					slog.Any("RegisterFailedLogin", err),
+				)
 				return err
 			}
 
-			const maxAttempts = 5
-
-			if failedUser.FailedLoginAttempts >= maxAttempts {
-				until := now.Add(15 * time.Minute)
-
-				_, err := users.LockUserUntil(
-					ctx,
-					user.ID,
-					&until,
-				)
-				if err != nil {
-					return err
-				}
+			if failedUser.LockedUntil != nil &&
+				failedUser.LockedUntil.After(time.Now()) {
+				return ErrAccountLocked
 			}
 
 			return nil
@@ -157,8 +152,18 @@ func (s *Service) Login(
 		user, err = users.ResetFailedLoginAttempts(
 			ctx,
 			user.ID,
+			int32(user.FailedLoginAttempts),
 		)
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrInvalidCredentials
+			}
+
+			s.logger.ErrorContext(
+				ctx,
+				"internal error",
+				slog.Any("ResetFailedLoginAttempts", err),
+			)
 			return err
 		}
 

@@ -41,6 +41,23 @@ FROM auth_sessions
 WHERE id = $1
 LIMIT 1;
 
+-- name: GetActiveAuthSessionByID :one
+SELECT
+    id,
+    user_id,
+    refresh_token_hash,
+    user_agent,
+    ip_address,
+    expires_at,
+    revoked_at,
+    created_at,
+    updated_at
+FROM auth_sessions
+WHERE id = $1
+AND revoked_at IS NULL
+  AND expires_at > NOW()
+LIMIT 1;
+
 -- name: RevokeAuthSession :one
 UPDATE auth_sessions
 SET

@@ -54,20 +54,15 @@ type UserRepository interface {
 		email string,
 	) (domain.User, error)
 
-	IncrementFailedLoginAttempts(
-		ctx context.Context,
-		id uuid.UUID,
-	) (domain.User, error)
-
 	ResetFailedLoginAttempts(
 		ctx context.Context,
 		id uuid.UUID,
+		expectedAttempts int32,
 	) (domain.User, error)
 
-	LockUserUntil(
+	RegisterFailedLogin(
 		ctx context.Context,
 		id uuid.UUID,
-		until *time.Time,
 	) (domain.User, error)
 }
 

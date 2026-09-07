@@ -44,23 +44,6 @@ FROM users
 WHERE email = $1
 LIMIT 1;
 
--- name: IncrementFailedLoginAttempts :one
-UPDATE users
-SET
-    failed_login_attempts = failed_login_attempts + 1,
-    updated_at = NOW()
-WHERE id = $1
-RETURNING
-    id,
-    email,
-    password_hash,
-    status,
-    email_verified_at,
-    failed_login_attempts,
-    locked_until,
-    created_at,
-    updated_at;
-
 -- name: ResetFailedLoginAttempts :one
 UPDATE users
 SET
@@ -68,6 +51,8 @@ SET
     locked_until = NULL,
     updated_at = NOW()
 WHERE id = $1
+AND failed_login_attempts = $2
+AND (locked_until IS NULL OR locked_until <= NOW())
 RETURNING
     id,
     email,
@@ -79,10 +64,15 @@ RETURNING
     created_at,
     updated_at;
 
--- name: LockUserUntil :one
+-- name: RegisterFailedLogin :one
 UPDATE users
 SET
-    locked_until = $2,
+    failed_login_attempts = LEAST(failed_login_attempts + 1, 5),
+    locked_until = CASE
+        WHEN failed_login_attempts + 1 >= 5
+        THEN NOW() + INTERVAL '15 minutes'
+        ELSE locked_until
+    END,
     updated_at = NOW()
 WHERE id = $1
 RETURNING
@@ -95,3 +85,4 @@ RETURNING
     locked_until,
     created_at,
     updated_at;
+

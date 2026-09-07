@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createUser = `-- name: CreateUser :one
@@ -124,10 +123,15 @@ func (q *Queries) GetUserByID(ctx context.Context, id uuid.UUID) (User, error) {
 	return i, err
 }
 
-const incrementFailedLoginAttempts = `-- name: IncrementFailedLoginAttempts :one
+const registerFailedLogin = `-- name: RegisterFailedLogin :one
 UPDATE users
 SET
-    failed_login_attempts = failed_login_attempts + 1,
+    failed_login_attempts = LEAST(failed_login_attempts + 1, 5),
+    locked_until = CASE
+        WHEN failed_login_attempts + 1 >= 5
+        THEN NOW() + INTERVAL '15 minutes'
+        ELSE locked_until
+    END,
     updated_at = NOW()
 WHERE id = $1
 RETURNING
@@ -142,48 +146,8 @@ RETURNING
     updated_at
 `
 
-func (q *Queries) IncrementFailedLoginAttempts(ctx context.Context, id uuid.UUID) (User, error) {
-	row := q.db.QueryRow(ctx, incrementFailedLoginAttempts, id)
-	var i User
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.PasswordHash,
-		&i.Status,
-		&i.EmailVerifiedAt,
-		&i.FailedLoginAttempts,
-		&i.LockedUntil,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const lockUserUntil = `-- name: LockUserUntil :one
-UPDATE users
-SET
-    locked_until = $2,
-    updated_at = NOW()
-WHERE id = $1
-RETURNING
-    id,
-    email,
-    password_hash,
-    status,
-    email_verified_at,
-    failed_login_attempts,
-    locked_until,
-    created_at,
-    updated_at
-`
-
-type LockUserUntilParams struct {
-	ID          uuid.UUID          `json:"id"`
-	LockedUntil pgtype.Timestamptz `json:"locked_until"`
-}
-
-func (q *Queries) LockUserUntil(ctx context.Context, arg LockUserUntilParams) (User, error) {
-	row := q.db.QueryRow(ctx, lockUserUntil, arg.ID, arg.LockedUntil)
+func (q *Queries) RegisterFailedLogin(ctx context.Context, id uuid.UUID) (User, error) {
+	row := q.db.QueryRow(ctx, registerFailedLogin, id)
 	var i User
 	err := row.Scan(
 		&i.ID,
@@ -206,6 +170,8 @@ SET
     locked_until = NULL,
     updated_at = NOW()
 WHERE id = $1
+AND failed_login_attempts = $2
+AND (locked_until IS NULL OR locked_until <= NOW())
 RETURNING
     id,
     email,
@@ -218,8 +184,13 @@ RETURNING
     updated_at
 `
 
-func (q *Queries) ResetFailedLoginAttempts(ctx context.Context, id uuid.UUID) (User, error) {
-	row := q.db.QueryRow(ctx, resetFailedLoginAttempts, id)
+type ResetFailedLoginAttemptsParams struct {
+	ID                  uuid.UUID `json:"id"`
+	FailedLoginAttempts int32     `json:"failed_login_attempts"`
+}
+
+func (q *Queries) ResetFailedLoginAttempts(ctx context.Context, arg ResetFailedLoginAttemptsParams) (User, error) {
+	row := q.db.QueryRow(ctx, resetFailedLoginAttempts, arg.ID, arg.FailedLoginAttempts)
 	var i User
 	err := row.Scan(
 		&i.ID,

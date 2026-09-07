@@ -2,13 +2,11 @@ package repository
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/itsZenTouch/marketplace/internal/domain"
 	"github.com/itsZenTouch/marketplace/internal/repository/db"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -75,27 +73,20 @@ func (r *userRepository) GetUserByEmail(
 	return userToDomain(user), nil
 }
 
-func (r *userRepository) IncrementFailedLoginAttempts(
-	ctx context.Context,
-	id uuid.UUID,
-) (domain.User, error) {
-	queries := db.New(r.db)
-
-	user, err := queries.IncrementFailedLoginAttempts(ctx, id)
-	if err != nil {
-		return domain.User{}, err
-	}
-
-	return userToDomain(user), nil
-}
-
 func (r *userRepository) ResetFailedLoginAttempts(
 	ctx context.Context,
 	id uuid.UUID,
+	expectedAttempts int32,
 ) (domain.User, error) {
 	queries := db.New(r.db)
 
-	user, err := queries.ResetFailedLoginAttempts(ctx, id)
+	user, err := queries.ResetFailedLoginAttempts(
+		ctx,
+		db.ResetFailedLoginAttemptsParams{
+			ID:                  id,
+			FailedLoginAttempts: expectedAttempts,
+		},
+	)
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -103,29 +94,13 @@ func (r *userRepository) ResetFailedLoginAttempts(
 	return userToDomain(user), nil
 }
 
-func (r *userRepository) LockUserUntil(
+func (r *userRepository) RegisterFailedLogin(
 	ctx context.Context,
 	id uuid.UUID,
-	until *time.Time,
 ) (domain.User, error) {
 	queries := db.New(r.db)
 
-	lockedUntil := pgtype.Timestamptz{}
-
-	if until != nil {
-		lockedUntil = pgtype.Timestamptz{
-			Time:  *until,
-			Valid: true,
-		}
-	}
-
-	user, err := queries.LockUserUntil(
-		ctx,
-		db.LockUserUntilParams{
-			ID:          id,
-			LockedUntil: lockedUntil,
-		},
-	)
+	user, err := queries.RegisterFailedLogin(ctx, id)
 	if err != nil {
 		return domain.User{}, err
 	}
