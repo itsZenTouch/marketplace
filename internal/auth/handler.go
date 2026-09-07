@@ -141,6 +141,7 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{
 			"error": "user not found",
 		})
+		return
 	}
 
 	response := MeResponse{

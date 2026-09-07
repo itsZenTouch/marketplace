@@ -85,7 +85,7 @@ func (s *Service) Login(
 		return LoginOutput{}, err
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 
 	if user.LockedUntil != nil &&
 		user.LockedUntil.After(now) {
@@ -123,7 +123,7 @@ func (s *Service) Login(
 			}
 
 			if failedUser.LockedUntil != nil &&
-				failedUser.LockedUntil.After(time.Now()) {
+				failedUser.LockedUntil.After(now) {
 				return ErrAccountLocked
 			}
 
