@@ -20,6 +20,7 @@ type CreateUserInput struct {
 type CreateAuthSessionInput struct {
 	ID               uuid.UUID
 	UserID           uuid.UUID
+	FamilyID         uuid.UUID
 	RefreshTokenHash string
 	UserAgent        string
 	IPAddress        net.IP
@@ -85,6 +86,7 @@ type AuthSessionRepository interface {
 	RevokeAuthSession(
 		ctx context.Context,
 		id uuid.UUID,
+		reason string,
 	) (domain.AuthSession, error)
 
 	ListAuthSessionsByUserID(

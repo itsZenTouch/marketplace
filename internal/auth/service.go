@@ -25,6 +25,10 @@ var (
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 )
 
+const (
+	revocationReasonLogout = "logout"
+)
+
 type Service struct {
 	users    repository.UserRepository
 	sessions repository.AuthSessionRepository
@@ -91,10 +95,12 @@ func (s *Service) Login(
 	if email == "" || input.Password == "" {
 		return LoginOutput{}, ErrInvalidCredentials
 	}
+	dummyHash := "$argon2id$v=19$m=65536,t=2,p=1$c2FsdHNhbHRzYWx0$haskhaskhaskhaskhaskhaskhaskhaskhaskhaskh"
 
 	user, err := s.users.GetUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			s.password.Compare(input.Password, dummyHash)
 			return LoginOutput{}, ErrInvalidCredentials
 		}
 
@@ -206,6 +212,7 @@ func (s *Service) Login(
 		}
 
 		sessionID := uuid.New()
+		familyID := uuid.New()
 
 		refreshToken, refreshTokenHash, err := s.token.CreateRefreshToken(sessionID)
 		if err != nil {
@@ -217,6 +224,7 @@ func (s *Service) Login(
 			repository.CreateAuthSessionInput{
 				ID:               sessionID,
 				UserID:           user.ID,
+				FamilyID:         familyID,
 				RefreshTokenHash: refreshTokenHash,
 				UserAgent:        input.UserAgent,
 				IPAddress:        input.IPAddress,
@@ -321,12 +329,18 @@ func (s *Service) Refresh(
 		return RefreshOutput{}, ErrAccountDisabled
 	}
 
-	newSessionID := uuid.New()
-
-	newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(newSessionID)
+	newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(session.ID)
 	if err != nil {
 		return RefreshOutput{}, err
 	}
+
+	// later...
+	// newSessionID := uuid.New()
+
+	// newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(newSessionID)
+	// if err != nil {
+	// 	return RefreshOutput{}, err
+	// }
 
 	newExpiresAt := time.Now().UTC().Add(s.token.RefreshTTL())
 
@@ -404,7 +418,11 @@ func (s *Service) Logout(
 		return ErrInvalidRefreshToken
 	}
 
-	_, err = s.sessions.RevokeAuthSession(ctx, sessionID)
+	_, err = s.sessions.RevokeAuthSession(
+		ctx,
+		sessionID,
+		revocationReasonLogout,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidRefreshToken

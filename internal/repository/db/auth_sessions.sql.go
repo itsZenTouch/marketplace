@@ -11,12 +11,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createAuthSession = `-- name: CreateAuthSession :one
 INSERT INTO auth_sessions (
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
@@ -28,16 +30,19 @@ VALUES (
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7
 )
 RETURNING
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
     expires_at,
     revoked_at,
+    revocation_reason,
     created_at,
     updated_at
 `
@@ -45,30 +50,48 @@ RETURNING
 type CreateAuthSessionParams struct {
 	ID               uuid.UUID `json:"id"`
 	UserID           uuid.UUID `json:"user_id"`
+	FamilyID         uuid.UUID `json:"family_id"`
 	RefreshTokenHash string    `json:"refresh_token_hash"`
 	UserAgent        string    `json:"user_agent"`
 	IpAddress        net.IP    `json:"ip_address"`
 	ExpiresAt        time.Time `json:"expires_at"`
 }
 
-func (q *Queries) CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error) {
+type CreateAuthSessionRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason string             `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (CreateAuthSessionRow, error) {
 	row := q.db.QueryRow(ctx, createAuthSession,
 		arg.ID,
 		arg.UserID,
+		arg.FamilyID,
 		arg.RefreshTokenHash,
 		arg.UserAgent,
 		arg.IpAddress,
 		arg.ExpiresAt,
 	)
-	var i AuthSession
+	var i CreateAuthSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.FamilyID,
 		&i.RefreshTokenHash,
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.RevocationReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -79,31 +102,49 @@ const getActiveAuthSessionByID = `-- name: GetActiveAuthSessionByID :one
 SELECT
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
     expires_at,
     revoked_at,
+    revocation_reason,
     created_at,
     updated_at
 FROM auth_sessions
 WHERE id = $1
-AND revoked_at IS NULL
+  AND revoked_at IS NULL
   AND expires_at > NOW()
 LIMIT 1
 `
 
-func (q *Queries) GetActiveAuthSessionByID(ctx context.Context, id uuid.UUID) (AuthSession, error) {
+type GetActiveAuthSessionByIDRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason string             `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) GetActiveAuthSessionByID(ctx context.Context, id uuid.UUID) (GetActiveAuthSessionByIDRow, error) {
 	row := q.db.QueryRow(ctx, getActiveAuthSessionByID, id)
-	var i AuthSession
+	var i GetActiveAuthSessionByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.FamilyID,
 		&i.RefreshTokenHash,
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.RevocationReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -114,11 +155,13 @@ const getAuthSessionByID = `-- name: GetAuthSessionByID :one
 SELECT
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
     expires_at,
     revoked_at,
+    revocation_reason,
     created_at,
     updated_at
 FROM auth_sessions
@@ -126,17 +169,33 @@ WHERE id = $1
 LIMIT 1
 `
 
-func (q *Queries) GetAuthSessionByID(ctx context.Context, id uuid.UUID) (AuthSession, error) {
+type GetAuthSessionByIDRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason string             `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) GetAuthSessionByID(ctx context.Context, id uuid.UUID) (GetAuthSessionByIDRow, error) {
 	row := q.db.QueryRow(ctx, getAuthSessionByID, id)
-	var i AuthSession
+	var i GetAuthSessionByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.FamilyID,
 		&i.RefreshTokenHash,
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.RevocationReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -147,11 +206,13 @@ const listAuthSessionsByUserID = `-- name: ListAuthSessionsByUserID :many
 SELECT
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
     expires_at,
     revoked_at,
+    revocation_reason,
     created_at,
     updated_at
 FROM auth_sessions
@@ -159,23 +220,39 @@ WHERE user_id = $1
 ORDER BY created_at DESC
 `
 
-func (q *Queries) ListAuthSessionsByUserID(ctx context.Context, userID uuid.UUID) ([]AuthSession, error) {
+type ListAuthSessionsByUserIDRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason string             `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) ListAuthSessionsByUserID(ctx context.Context, userID uuid.UUID) ([]ListAuthSessionsByUserIDRow, error) {
 	rows, err := q.db.Query(ctx, listAuthSessionsByUserID, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AuthSession{}
+	items := []ListAuthSessionsByUserIDRow{}
 	for rows.Next() {
-		var i AuthSession
+		var i ListAuthSessionsByUserIDRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
+			&i.FamilyID,
 			&i.RefreshTokenHash,
 			&i.UserAgent,
 			&i.IpAddress,
 			&i.ExpiresAt,
 			&i.RevokedAt,
+			&i.RevocationReason,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -193,32 +270,56 @@ const revokeAuthSession = `-- name: RevokeAuthSession :one
 UPDATE auth_sessions
 SET
     revoked_at = NOW(),
+    revocation_reason = $2,
     updated_at = NOW()
 WHERE id = $1
   AND revoked_at IS NULL
 RETURNING
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
     expires_at,
     revoked_at,
+    revocation_reason,
     created_at,
     updated_at
 `
 
-func (q *Queries) RevokeAuthSession(ctx context.Context, id uuid.UUID) (AuthSession, error) {
-	row := q.db.QueryRow(ctx, revokeAuthSession, id)
-	var i AuthSession
+type RevokeAuthSessionParams struct {
+	ID               uuid.UUID `json:"id"`
+	RevocationReason string    `json:"revocation_reason"`
+}
+
+type RevokeAuthSessionRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason string             `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionParams) (RevokeAuthSessionRow, error) {
+	row := q.db.QueryRow(ctx, revokeAuthSession, arg.ID, arg.RevocationReason)
+	var i RevokeAuthSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.FamilyID,
 		&i.RefreshTokenHash,
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.RevocationReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -238,11 +339,13 @@ WHERE id = $3
 RETURNING
     id,
     user_id,
+    family_id,
     refresh_token_hash,
     user_agent,
     ip_address,
     expires_at,
     revoked_at,
+    revocation_reason,
     created_at,
     updated_at
 `
@@ -254,22 +357,38 @@ type RotateAuthSessionParams struct {
 	CurrentRefreshTokenHash string    `json:"current_refresh_token_hash"`
 }
 
-func (q *Queries) RotateAuthSession(ctx context.Context, arg RotateAuthSessionParams) (AuthSession, error) {
+type RotateAuthSessionRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        string             `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason string             `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) RotateAuthSession(ctx context.Context, arg RotateAuthSessionParams) (RotateAuthSessionRow, error) {
 	row := q.db.QueryRow(ctx, rotateAuthSession,
 		arg.NewRefreshTokenHash,
 		arg.ExpiresAt,
 		arg.ID,
 		arg.CurrentRefreshTokenHash,
 	)
-	var i AuthSession
+	var i RotateAuthSessionRow
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.FamilyID,
 		&i.RefreshTokenHash,
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
 		&i.RevokedAt,
+		&i.RevocationReason,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

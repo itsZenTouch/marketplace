@@ -398,6 +398,7 @@ func TestServiceRefresh(t *testing.T) {
 	)
 
 	sessionID := uuid.New()
+	familyID := uuid.New()
 
 	refreshToken, refreshTokenHash, err := jwt.CreateRefreshToken(sessionID)
 	if err != nil {
@@ -409,6 +410,7 @@ func TestServiceRefresh(t *testing.T) {
 		repository.CreateAuthSessionInput{
 			ID:               sessionID,
 			UserID:           userID,
+			FamilyID:         familyID,
 			RefreshTokenHash: refreshTokenHash,
 			UserAgent:        "test-agent",
 			IPAddress:        net.ParseIP("127.0.0.1"),
@@ -552,6 +554,7 @@ func TestServiceLogout(t *testing.T) {
 	)
 
 	sessionID := uuid.New()
+	familyID := uuid.New()
 
 	refreshToken, refreshTokenHash, err := jwt.CreateRefreshToken(sessionID)
 	if err != nil {
@@ -563,6 +566,7 @@ func TestServiceLogout(t *testing.T) {
 		repository.CreateAuthSessionInput{
 			ID:               sessionID,
 			UserID:           userID,
+			FamilyID:         familyID,
 			RefreshTokenHash: refreshTokenHash,
 			UserAgent:        "test-agent",
 			IPAddress:        net.ParseIP("127.0.0.1"),

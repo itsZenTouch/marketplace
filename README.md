@@ -68,3 +68,13 @@ Update SQL queries/schema and run sqlc generate again.
 ```bash
 RUN_DB_TESTS=1 DATABASE_URL="$DATABASE_URL" go test ./... -v
 ```
+
+## coming soon...
+Step 1
+Establish family identity + correct current-session invariants.
+
+Step 2
+Make sessions immutable and detect token reuse.
+
+Step 3
+Revoke entire family on reuse.

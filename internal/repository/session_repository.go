@@ -36,6 +36,7 @@ func (r *authSessionRepository) CreateAuthSession(
 	session, err := queries.CreateAuthSession(ctx, db.CreateAuthSessionParams{
 		ID:               input.ID,
 		UserID:           input.UserID,
+		FamilyID:         input.FamilyID, // FIX
 		RefreshTokenHash: input.RefreshTokenHash,
 		UserAgent:        input.UserAgent,
 		IpAddress:        input.IPAddress,
@@ -45,7 +46,7 @@ func (r *authSessionRepository) CreateAuthSession(
 		return domain.AuthSession{}, err
 	}
 
-	return authSessionToDomain(session), nil
+	return createAuthSessionToDomain(session), nil
 }
 
 func (r *authSessionRepository) GetAuthSessionByID(
@@ -59,7 +60,7 @@ func (r *authSessionRepository) GetAuthSessionByID(
 		return domain.AuthSession{}, err
 	}
 
-	return authSessionToDomain(session), nil
+	return getAuthSessionToDomain(session), nil
 }
 
 func (r *authSessionRepository) GetActiveAuthSessionByID(
@@ -73,21 +74,28 @@ func (r *authSessionRepository) GetActiveAuthSessionByID(
 		return domain.AuthSession{}, err
 	}
 
-	return authSessionToDomain(session), nil
+	return getActiveAuthSessionToDomain(session), nil
 }
 
 func (r *authSessionRepository) RevokeAuthSession(
 	ctx context.Context,
 	id uuid.UUID,
+	reason string,
 ) (domain.AuthSession, error) {
 	queries := db.New(r.db)
 
-	session, err := queries.RevokeAuthSession(ctx, id)
+	session, err := queries.RevokeAuthSession(
+		ctx,
+		db.RevokeAuthSessionParams{
+			ID:               id,
+			RevocationReason: reason,
+		},
+	)
 	if err != nil {
 		return domain.AuthSession{}, err
 	}
 
-	return authSessionToDomain(session), nil
+	return revokeAuthSessionToDomain(session), nil
 }
 
 func (r *authSessionRepository) ListAuthSessionsByUserID(
@@ -104,7 +112,7 @@ func (r *authSessionRepository) ListAuthSessionsByUserID(
 	result := make([]domain.AuthSession, 0, len(sessions))
 
 	for _, session := range sessions {
-		result = append(result, authSessionToDomain(session))
+		result = append(result, listAuthSessionToDomain(session))
 	}
 
 	return result, nil
@@ -132,5 +140,5 @@ func (r *authSessionRepository) RotateAuthSession(
 		return domain.AuthSession{}, err
 	}
 
-	return authSessionToDomain(session), nil
+	return rotateAuthSessionToDomain(session), nil
 }

@@ -22,6 +22,8 @@ type AuthSession struct {
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RevocationReason string             `json:"revocation_reason"`
 }
 
 type User struct {
