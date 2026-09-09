@@ -69,6 +69,19 @@ Update SQL queries/schema and run sqlc generate again.
 RUN_DB_TESTS=1 DATABASE_URL="$DATABASE_URL" go test ./... -v
 ```
 
+### concurrency verification
+
+```bash
+RUN_DB_TESTS=1 DATABASE_URL="$DATABASE_URL" \
+go test ./internal/auth -run TestServiceRefresh_ConcurrentSameToken -count=10 -v
+```
+
+```bash
+RUN_DB_TESTS=1 DATABASE_URL="$DATABASE_URL" \
+go test ./internal/auth -run 'TestServiceRefresh' -count=5 -v
+```
+
+---
 ## coming soon...
 Step 1
 Establish family identity + correct current-session invariants.

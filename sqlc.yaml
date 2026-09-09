@@ -33,7 +33,3 @@ sql:
           - db_type: "inet"
             nullable: true
             go_type: "net.IP"
-
-          - db_type: "text"
-            nullable: true
-            go_type: "string"

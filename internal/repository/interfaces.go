@@ -86,8 +86,14 @@ type AuthSessionRepository interface {
 	RevokeAuthSession(
 		ctx context.Context,
 		id uuid.UUID,
-		reason string,
+		reason *string,
 	) (domain.AuthSession, error)
+
+	RevokeAuthSessionFamily(
+		ctx context.Context,
+		familyID uuid.UUID,
+		reason *string,
+	) error
 
 	ListAuthSessionsByUserID(
 		ctx context.Context,

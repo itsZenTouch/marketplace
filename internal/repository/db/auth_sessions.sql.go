@@ -52,7 +52,7 @@ type CreateAuthSessionParams struct {
 	UserID           uuid.UUID `json:"user_id"`
 	FamilyID         uuid.UUID `json:"family_id"`
 	RefreshTokenHash string    `json:"refresh_token_hash"`
-	UserAgent        string    `json:"user_agent"`
+	UserAgent        *string   `json:"user_agent"`
 	IpAddress        net.IP    `json:"ip_address"`
 	ExpiresAt        time.Time `json:"expires_at"`
 }
@@ -62,11 +62,11 @@ type CreateAuthSessionRow struct {
 	UserID           uuid.UUID          `json:"user_id"`
 	FamilyID         uuid.UUID          `json:"family_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        string             `json:"user_agent"`
+	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason string             `json:"revocation_reason"`
+	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
@@ -123,11 +123,11 @@ type GetActiveAuthSessionByIDRow struct {
 	UserID           uuid.UUID          `json:"user_id"`
 	FamilyID         uuid.UUID          `json:"family_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        string             `json:"user_agent"`
+	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason string             `json:"revocation_reason"`
+	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
@@ -174,11 +174,11 @@ type GetAuthSessionByIDRow struct {
 	UserID           uuid.UUID          `json:"user_id"`
 	FamilyID         uuid.UUID          `json:"family_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        string             `json:"user_agent"`
+	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason string             `json:"revocation_reason"`
+	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
@@ -225,11 +225,11 @@ type ListAuthSessionsByUserIDRow struct {
 	UserID           uuid.UUID          `json:"user_id"`
 	FamilyID         uuid.UUID          `json:"family_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        string             `json:"user_agent"`
+	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason string             `json:"revocation_reason"`
+	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
@@ -290,7 +290,7 @@ RETURNING
 
 type RevokeAuthSessionParams struct {
 	ID               uuid.UUID `json:"id"`
-	RevocationReason string    `json:"revocation_reason"`
+	RevocationReason *string   `json:"revocation_reason"`
 }
 
 type RevokeAuthSessionRow struct {
@@ -298,11 +298,11 @@ type RevokeAuthSessionRow struct {
 	UserID           uuid.UUID          `json:"user_id"`
 	FamilyID         uuid.UUID          `json:"family_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        string             `json:"user_agent"`
+	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason string             `json:"revocation_reason"`
+	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 }
@@ -324,6 +324,26 @@ func (q *Queries) RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionPa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const revokeAuthSessionFamily = `-- name: RevokeAuthSessionFamily :exec
+UPDATE auth_sessions
+SET
+    revoked_at = NOW(),
+    revocation_reason = $1,
+    updated_at = NOW()
+WHERE family_id = $2
+  AND revoked_at IS NULL
+`
+
+type RevokeAuthSessionFamilyParams struct {
+	RevocationReason *string   `json:"revocation_reason"`
+	FamilyID         uuid.UUID `json:"family_id"`
+}
+
+func (q *Queries) RevokeAuthSessionFamily(ctx context.Context, arg RevokeAuthSessionFamilyParams) error {
+	_, err := q.db.Exec(ctx, revokeAuthSessionFamily, arg.RevocationReason, arg.FamilyID)
+	return err
 }
 
 const rotateAuthSession = `-- name: RotateAuthSession :one
@@ -362,11 +382,11 @@ type RotateAuthSessionRow struct {
 	UserID           uuid.UUID          `json:"user_id"`
 	FamilyID         uuid.UUID          `json:"family_id"`
 	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        string             `json:"user_agent"`
+	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason string             `json:"revocation_reason"`
+	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`
 }

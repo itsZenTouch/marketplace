@@ -130,4 +130,12 @@ RETURNING
     created_at,
     updated_at;
 
+-- name: RevokeAuthSessionFamily :exec
+UPDATE auth_sessions
+SET
+    revoked_at = NOW(),
+    revocation_reason = sqlc.arg(revocation_reason),
+    updated_at = NOW()
+WHERE family_id = sqlc.arg(family_id)
+  AND revoked_at IS NULL;
 

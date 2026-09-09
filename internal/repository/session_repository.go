@@ -36,9 +36,9 @@ func (r *authSessionRepository) CreateAuthSession(
 	session, err := queries.CreateAuthSession(ctx, db.CreateAuthSessionParams{
 		ID:               input.ID,
 		UserID:           input.UserID,
-		FamilyID:         input.FamilyID, // FIX
+		FamilyID:         input.FamilyID,
 		RefreshTokenHash: input.RefreshTokenHash,
-		UserAgent:        input.UserAgent,
+		UserAgent:        stringPtr(input.UserAgent),
 		IpAddress:        input.IPAddress,
 		ExpiresAt:        input.ExpiresAt,
 	})
@@ -80,7 +80,7 @@ func (r *authSessionRepository) GetActiveAuthSessionByID(
 func (r *authSessionRepository) RevokeAuthSession(
 	ctx context.Context,
 	id uuid.UUID,
-	reason string,
+	reason *string,
 ) (domain.AuthSession, error) {
 	queries := db.New(r.db)
 
@@ -96,6 +96,22 @@ func (r *authSessionRepository) RevokeAuthSession(
 	}
 
 	return revokeAuthSessionToDomain(session), nil
+}
+
+func (r *authSessionRepository) RevokeAuthSessionFamily(
+	ctx context.Context,
+	familyID uuid.UUID,
+	reason *string,
+) error {
+	queries := db.New(r.db)
+
+	return queries.RevokeAuthSessionFamily(
+		ctx,
+		db.RevokeAuthSessionFamilyParams{
+			FamilyID:         familyID,
+			RevocationReason: reason,
+		},
+	)
 }
 
 func (r *authSessionRepository) ListAuthSessionsByUserID(

@@ -27,11 +27,11 @@ func createAuthSessionToDomain(session db.CreateAuthSessionRow) domain.AuthSessi
 		UserID:           session.UserID,
 		FamilyID:         session.FamilyID,
 		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        session.UserAgent,
+		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: stringPtr(session.RevocationReason),
+		RevocationReason: session.RevocationReason,
 	}
 }
 
@@ -41,11 +41,11 @@ func getAuthSessionToDomain(session db.GetAuthSessionByIDRow) domain.AuthSession
 		UserID:           session.UserID,
 		FamilyID:         session.FamilyID,
 		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        session.UserAgent,
+		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: stringPtr(session.RevocationReason),
+		RevocationReason: session.RevocationReason,
 	}
 }
 
@@ -55,11 +55,11 @@ func getActiveAuthSessionToDomain(session db.GetActiveAuthSessionByIDRow) domain
 		UserID:           session.UserID,
 		FamilyID:         session.FamilyID,
 		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        session.UserAgent,
+		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: stringPtr(session.RevocationReason),
+		RevocationReason: session.RevocationReason,
 	}
 }
 
@@ -69,11 +69,11 @@ func revokeAuthSessionToDomain(session db.RevokeAuthSessionRow) domain.AuthSessi
 		UserID:           session.UserID,
 		FamilyID:         session.FamilyID,
 		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        session.UserAgent,
+		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: stringPtr(session.RevocationReason),
+		RevocationReason: session.RevocationReason,
 	}
 }
 
@@ -83,11 +83,11 @@ func rotateAuthSessionToDomain(session db.RotateAuthSessionRow) domain.AuthSessi
 		UserID:           session.UserID,
 		FamilyID:         session.FamilyID,
 		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        session.UserAgent,
+		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: stringPtr(session.RevocationReason),
+		RevocationReason: session.RevocationReason,
 	}
 }
 
@@ -97,11 +97,11 @@ func listAuthSessionToDomain(session db.ListAuthSessionsByUserIDRow) domain.Auth
 		UserID:           session.UserID,
 		FamilyID:         session.FamilyID,
 		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        session.UserAgent,
+		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: stringPtr(session.RevocationReason),
+		RevocationReason: session.RevocationReason,
 	}
 }
 
@@ -119,4 +119,12 @@ func timestamptzPtr(value pgtype.Timestamptz) *time.Time {
 	}
 
 	return &value.Time
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+
+	return *value
 }

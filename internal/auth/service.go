@@ -23,10 +23,12 @@ var (
 	ErrAccountDisabled     = errors.New("account disabled")
 	ErrAccountLocked       = errors.New("account temporarily locked")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
+	ErrRefreshTokenReuse   = errors.New("refresh token reuse detected")
 )
 
-const (
+var (
 	revocationReasonLogout = "logout"
+	revocationReasonReuse  = "refresh_token_reuse"
 )
 
 type Service struct {
@@ -287,7 +289,7 @@ func (s *Service) Refresh(
 		return RefreshOutput{}, ErrInvalidRefreshToken
 	}
 
-	session, err := s.sessions.GetActiveAuthSessionByID(ctx, sessionID)
+	session, err := s.sessions.GetAuthSessionByID(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RefreshOutput{}, ErrInvalidRefreshToken
@@ -295,12 +297,20 @@ func (s *Service) Refresh(
 
 		s.logger.ErrorContext(
 			ctx,
-			"failed to get active auth session",
+			"failed to get auth session",
 			slog.String("session_id", sessionID.String()),
 			slog.Any("error", err),
 		)
 
 		return RefreshOutput{}, err
+	}
+
+	if session.RevokedAt != nil {
+		return RefreshOutput{}, ErrInvalidRefreshToken
+	}
+
+	if !time.Now().UTC().Before(session.ExpiresAt) {
+		return RefreshOutput{}, ErrInvalidRefreshToken
 	}
 
 	providedHash := token.HashRefreshToken(refreshToken)
@@ -309,7 +319,10 @@ func (s *Service) Refresh(
 		[]byte(providedHash),
 		[]byte(session.RefreshTokenHash),
 	) != 1 {
-		return RefreshOutput{}, ErrInvalidRefreshToken
+		return RefreshOutput{}, s.handleRefreshTokenReuse(
+			ctx,
+			session,
+		)
 	}
 
 	user, err := s.users.GetUserByID(ctx, session.UserID)
@@ -353,8 +366,11 @@ func (s *Service) Refresh(
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Someone already rotated/revoked this session.
-			return RefreshOutput{}, ErrInvalidRefreshToken
+			return RefreshOutput{}, s.classifyRefreshRotationFailure(
+				ctx,
+				sessionID,
+				providedHash,
+			)
 		}
 
 		s.logger.ErrorContext(
@@ -418,10 +434,11 @@ func (s *Service) Logout(
 		return ErrInvalidRefreshToken
 	}
 
+	revocationReasonLogoutPtr := revocationReasonLogout
 	_, err = s.sessions.RevokeAuthSession(
 		ctx,
 		sessionID,
-		revocationReasonLogout,
+		&revocationReasonLogoutPtr,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -465,4 +482,80 @@ func (s *Service) ListSessions(
 	}
 
 	return sessions, nil
+}
+
+// helper //
+
+func (s *Service) classifyRefreshRotationFailure(
+	ctx context.Context,
+	sessionID uuid.UUID,
+	providedHash string,
+) error {
+	currentSession, err := s.sessions.GetAuthSessionByID(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrInvalidRefreshToken
+		}
+
+		s.logger.ErrorContext(
+			ctx,
+			"failed to recheck auth session after rotation failure",
+			slog.String("session_id", sessionID.String()),
+			slog.Any("error", err),
+		)
+
+		return err
+	}
+
+	if currentSession.RevokedAt != nil {
+		return ErrInvalidRefreshToken
+	}
+
+	if !time.Now().UTC().Before(currentSession.ExpiresAt) {
+		return ErrInvalidRefreshToken
+	}
+
+	if subtle.ConstantTimeCompare(
+		[]byte(providedHash),
+		[]byte(currentSession.RefreshTokenHash),
+	) != 1 {
+		return s.handleRefreshTokenReuse(
+			ctx,
+			currentSession,
+		)
+	}
+
+	return ErrInvalidRefreshToken
+}
+
+func (s *Service) handleRefreshTokenReuse(
+	ctx context.Context,
+	session domain.AuthSession,
+) error {
+	revocationReasonReusePtr := revocationReasonReuse
+
+	if err := s.sessions.RevokeAuthSessionFamily(
+		ctx,
+		session.FamilyID,
+		&revocationReasonReusePtr,
+	); err != nil {
+		s.logger.ErrorContext(
+			ctx,
+			"failed to revoke auth session family after refresh token reuse",
+			slog.String("session_id", session.ID.String()),
+			slog.String("family_id", session.FamilyID.String()),
+			slog.Any("error", err),
+		)
+
+		return err
+	}
+
+	s.logger.WarnContext(
+		ctx,
+		"refresh token reuse detected",
+		slog.String("session_id", session.ID.String()),
+		slog.String("family_id", session.FamilyID.String()),
+	)
+
+	return ErrRefreshTokenReuse
 }
