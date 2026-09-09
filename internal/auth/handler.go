@@ -179,17 +179,6 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func writeJSON(
-	w http.ResponseWriter,
-	status int,
-	value any,
-) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	_ = json.NewEncoder(w).Encode(value)
-}
-
 func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
@@ -217,7 +206,8 @@ func (h *Handler) Refresh(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		switch {
-		case errors.Is(err, ErrInvalidRefreshToken):
+		case errors.Is(err, ErrInvalidRefreshToken),
+			errors.Is(err, ErrRefreshTokenReuse):
 			writeJSON(w, http.StatusUnauthorized, map[string]string{
 				"error": "invalid refresh token",
 			})
@@ -335,4 +325,17 @@ func (h *Handler) Sessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, response)
+}
+
+// helper //
+
+func writeJSON(
+	w http.ResponseWriter,
+	status int,
+	value any,
+) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(value)
 }
