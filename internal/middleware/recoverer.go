@@ -1,6 +1,7 @@
 package appmiddleware
 
 import (
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -28,14 +29,24 @@ func Recoverer(next http.Handler) http.Handler {
 					),
 				)
 
-				http.Error(
+				writeError(
 					w,
-					http.StatusText(http.StatusInternalServerError),
 					http.StatusInternalServerError,
+					"internal server error",
 				)
+
 			}
 		}()
 
 		next.ServeHTTP(w, r)
+	})
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error": message,
 	})
 }
