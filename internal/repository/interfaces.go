@@ -83,6 +83,12 @@ type AuthSessionRepository interface {
 		id uuid.UUID,
 	) (domain.AuthSession, error)
 
+	ConsumeAuthSession(
+		ctx context.Context,
+		id uuid.UUID,
+		expectedRefreshTokenHash string,
+	) (domain.AuthSession, error)
+
 	RevokeAuthSession(
 		ctx context.Context,
 		id uuid.UUID,
@@ -99,12 +105,4 @@ type AuthSessionRepository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 	) ([]domain.AuthSession, error)
-
-	RotateAuthSession(
-		ctx context.Context,
-		id uuid.UUID,
-		newRefreshTokenHash string,
-		expiresAt time.Time,
-		expectedRefreshTokenHash string,
-	) (domain.AuthSession, error)
 }

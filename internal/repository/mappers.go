@@ -30,6 +30,7 @@ func createAuthSessionToDomain(session db.CreateAuthSessionRow) domain.AuthSessi
 		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
+		ConsumedAt:       timestamptzPtr(session.ConsumedAt),
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
 		RevocationReason: session.RevocationReason,
 	}
@@ -44,6 +45,7 @@ func getAuthSessionToDomain(session db.GetAuthSessionByIDRow) domain.AuthSession
 		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
+		ConsumedAt:       timestamptzPtr(session.ConsumedAt),
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
 		RevocationReason: session.RevocationReason,
 	}
@@ -58,6 +60,7 @@ func getActiveAuthSessionToDomain(session db.GetActiveAuthSessionByIDRow) domain
 		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
+		ConsumedAt:       timestamptzPtr(session.ConsumedAt),
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
 		RevocationReason: session.RevocationReason,
 	}
@@ -72,20 +75,7 @@ func revokeAuthSessionToDomain(session db.RevokeAuthSessionRow) domain.AuthSessi
 		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
-		RevokedAt:        timestamptzPtr(session.RevokedAt),
-		RevocationReason: session.RevocationReason,
-	}
-}
-
-func rotateAuthSessionToDomain(session db.RotateAuthSessionRow) domain.AuthSession {
-	return domain.AuthSession{
-		ID:               session.ID,
-		UserID:           session.UserID,
-		FamilyID:         session.FamilyID,
-		RefreshTokenHash: session.RefreshTokenHash,
-		UserAgent:        stringValue(session.UserAgent),
-		IPAddress:        session.IpAddress,
-		ExpiresAt:        session.ExpiresAt,
+		ConsumedAt:       timestamptzPtr(session.ConsumedAt),
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
 		RevocationReason: session.RevocationReason,
 	}
@@ -100,6 +90,24 @@ func listAuthSessionToDomain(session db.ListAuthSessionsByUserIDRow) domain.Auth
 		UserAgent:        stringValue(session.UserAgent),
 		IPAddress:        session.IpAddress,
 		ExpiresAt:        session.ExpiresAt,
+		ConsumedAt:       timestamptzPtr(session.ConsumedAt),
+		RevokedAt:        timestamptzPtr(session.RevokedAt),
+		RevocationReason: session.RevocationReason,
+	}
+}
+
+func consumeAuthSessionToDomain(
+	session db.ConsumeAuthSessionRow,
+) domain.AuthSession {
+	return domain.AuthSession{
+		ID:               session.ID,
+		UserID:           session.UserID,
+		FamilyID:         session.FamilyID,
+		RefreshTokenHash: session.RefreshTokenHash,
+		UserAgent:        stringValue(session.UserAgent),
+		IPAddress:        session.IpAddress,
+		ExpiresAt:        session.ExpiresAt,
+		ConsumedAt:       timestamptzPtr(session.ConsumedAt),
 		RevokedAt:        timestamptzPtr(session.RevokedAt),
 		RevocationReason: session.RevocationReason,
 	}

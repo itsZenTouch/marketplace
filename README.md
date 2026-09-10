@@ -83,11 +83,27 @@ go test ./internal/auth -run 'TestServiceRefresh' -count=5 -v
 
 ---
 ## coming soon...
-Step 1
-Establish family identity + correct current-session invariants.
 
-Step 2
-Make sessions immutable and detect token reuse.
+✅ -> Establish family identity + correct current-session invariants.
 
-Step 3
-Revoke entire family on reuse.
+✅ -> detect token reuse.
+
+✅ -> Revoke entire family on reuse.
+
+✅ -> Make sessions immutable
+
+✅ Correct concurrency model
+✅ Atomic token consumption
+✅ New session generation
+✅ Token-family preservation
+✅ Reuse detection preserved
+✅ Integration-tested under repeated concurrency
+✅ Full test suite passing
+
+Token rotation
+├── new session ID per generation
+├── same family ID
+├── old session consumed
+├── concurrent reuse detected atomically
+├── reuse → family revocation
+└── descendant session invalidated

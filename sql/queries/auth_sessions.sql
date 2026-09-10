@@ -25,6 +25,7 @@ RETURNING
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -39,6 +40,7 @@ SELECT
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -57,6 +59,7 @@ SELECT
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -84,6 +87,7 @@ RETURNING
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -98,6 +102,7 @@ SELECT
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -107,13 +112,24 @@ WHERE user_id = $1
 ORDER BY created_at DESC;
 
 
--- name: RotateAuthSession :one
+-- name: RevokeAuthSessionFamily :exec
 UPDATE auth_sessions
 SET
-    refresh_token_hash = sqlc.arg(new_refresh_token_hash),
-    expires_at = sqlc.arg(expires_at),
+    revoked_at = NOW(),
+    revocation_reason = sqlc.arg(revocation_reason),
+    updated_at = NOW()
+WHERE family_id = sqlc.arg(family_id)
+  AND revoked_at IS NULL;
+
+
+
+-- name: ConsumeAuthSession :one
+UPDATE auth_sessions
+SET
+    consumed_at = NOW(),
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
+  AND consumed_at IS NULL
   AND revoked_at IS NULL
   AND expires_at > NOW()
   AND refresh_token_hash = sqlc.arg(current_refresh_token_hash)
@@ -125,17 +141,8 @@ RETURNING
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
     updated_at;
-
--- name: RevokeAuthSessionFamily :exec
-UPDATE auth_sessions
-SET
-    revoked_at = NOW(),
-    revocation_reason = sqlc.arg(revocation_reason),
-    updated_at = NOW()
-WHERE family_id = sqlc.arg(family_id)
-  AND revoked_at IS NULL;
-

@@ -15,6 +15,7 @@ type AuthSession struct {
 	UserAgent        string
 	IPAddress        net.IP
 	ExpiresAt        time.Time
+	ConsumedAt       *time.Time
 	RevokedAt        *time.Time
 	RevocationReason *string
 }

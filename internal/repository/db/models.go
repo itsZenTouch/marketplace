@@ -19,6 +19,7 @@ type AuthSession struct {
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	CreatedAt        time.Time          `json:"created_at"`
 	UpdatedAt        time.Time          `json:"updated_at"`

@@ -342,28 +342,45 @@ func (s *Service) Refresh(
 		return RefreshOutput{}, ErrAccountDisabled
 	}
 
-	newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(session.ID)
+	newSessionID := uuid.New()
+
+	newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(newSessionID)
 	if err != nil {
 		return RefreshOutput{}, err
 	}
 
-	// later...
-	// newSessionID := uuid.New()
-
-	// newRefreshToken, newRefreshTokenHash, err := s.token.CreateRefreshToken(newSessionID)
-	// if err != nil {
-	// 	return RefreshOutput{}, err
-	// }
-
 	newExpiresAt := time.Now().UTC().Add(s.token.RefreshTTL())
 
-	_, err = s.sessions.RotateAuthSession(
-		ctx,
-		sessionID,
-		newRefreshTokenHash,
-		newExpiresAt,
-		providedHash,
-	)
+	err = s.uow.WithTx(ctx, func(uow repository.UnitOfWork) error {
+		txSessions := uow.AuthSessions()
+
+		_, err := txSessions.ConsumeAuthSession(
+			ctx,
+			sessionID,
+			providedHash,
+		)
+		if err != nil {
+			return err
+		}
+
+		_, err = txSessions.CreateAuthSession(
+			ctx,
+			repository.CreateAuthSessionInput{
+				ID:               newSessionID,
+				UserID:           session.UserID,
+				FamilyID:         session.FamilyID,
+				RefreshTokenHash: newRefreshTokenHash,
+				UserAgent:        session.UserAgent,
+				IPAddress:        session.IPAddress,
+				ExpiresAt:        newExpiresAt,
+			},
+		)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RefreshOutput{}, s.classifyRefreshRotationFailure(
@@ -377,6 +394,7 @@ func (s *Service) Refresh(
 			ctx,
 			"failed to rotate auth session",
 			slog.String("session_id", sessionID.String()),
+			slog.String("new_session_id", newSessionID.String()),
 			slog.Any("error", err),
 		)
 
@@ -518,11 +536,15 @@ func (s *Service) classifyRefreshRotationFailure(
 	if subtle.ConstantTimeCompare(
 		[]byte(providedHash),
 		[]byte(currentSession.RefreshTokenHash),
-	) != 1 {
-		return s.handleRefreshTokenReuse(
-			ctx,
-			currentSession,
-		)
+	) == 1 {
+		if currentSession.ConsumedAt != nil {
+			return s.handleRefreshTokenReuse(
+				ctx,
+				currentSession,
+			)
+		}
+
+		return ErrInvalidRefreshToken
 	}
 
 	return ErrInvalidRefreshToken

@@ -14,6 +14,71 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeAuthSession = `-- name: ConsumeAuthSession :one
+UPDATE auth_sessions
+SET
+    consumed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+  AND consumed_at IS NULL
+  AND revoked_at IS NULL
+  AND expires_at > NOW()
+  AND refresh_token_hash = $2
+RETURNING
+    id,
+    user_id,
+    family_id,
+    refresh_token_hash,
+    user_agent,
+    ip_address,
+    expires_at,
+    consumed_at,
+    revoked_at,
+    revocation_reason,
+    created_at,
+    updated_at
+`
+
+type ConsumeAuthSessionParams struct {
+	ID                      uuid.UUID `json:"id"`
+	CurrentRefreshTokenHash string    `json:"current_refresh_token_hash"`
+}
+
+type ConsumeAuthSessionRow struct {
+	ID               uuid.UUID          `json:"id"`
+	UserID           uuid.UUID          `json:"user_id"`
+	FamilyID         uuid.UUID          `json:"family_id"`
+	RefreshTokenHash string             `json:"refresh_token_hash"`
+	UserAgent        *string            `json:"user_agent"`
+	IpAddress        net.IP             `json:"ip_address"`
+	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+	RevocationReason *string            `json:"revocation_reason"`
+	CreatedAt        time.Time          `json:"created_at"`
+	UpdatedAt        time.Time          `json:"updated_at"`
+}
+
+func (q *Queries) ConsumeAuthSession(ctx context.Context, arg ConsumeAuthSessionParams) (ConsumeAuthSessionRow, error) {
+	row := q.db.QueryRow(ctx, consumeAuthSession, arg.ID, arg.CurrentRefreshTokenHash)
+	var i ConsumeAuthSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.FamilyID,
+		&i.RefreshTokenHash,
+		&i.UserAgent,
+		&i.IpAddress,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.RevokedAt,
+		&i.RevocationReason,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createAuthSession = `-- name: CreateAuthSession :one
 INSERT INTO auth_sessions (
     id,
@@ -41,6 +106,7 @@ RETURNING
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -65,6 +131,7 @@ type CreateAuthSessionRow struct {
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
@@ -90,6 +157,7 @@ func (q *Queries) CreateAuthSession(ctx context.Context, arg CreateAuthSessionPa
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
+		&i.ConsumedAt,
 		&i.RevokedAt,
 		&i.RevocationReason,
 		&i.CreatedAt,
@@ -107,6 +175,7 @@ SELECT
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -126,6 +195,7 @@ type GetActiveAuthSessionByIDRow struct {
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
@@ -143,6 +213,7 @@ func (q *Queries) GetActiveAuthSessionByID(ctx context.Context, id uuid.UUID) (G
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
+		&i.ConsumedAt,
 		&i.RevokedAt,
 		&i.RevocationReason,
 		&i.CreatedAt,
@@ -160,6 +231,7 @@ SELECT
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -177,6 +249,7 @@ type GetAuthSessionByIDRow struct {
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
@@ -194,6 +267,7 @@ func (q *Queries) GetAuthSessionByID(ctx context.Context, id uuid.UUID) (GetAuth
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
+		&i.ConsumedAt,
 		&i.RevokedAt,
 		&i.RevocationReason,
 		&i.CreatedAt,
@@ -211,6 +285,7 @@ SELECT
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -228,6 +303,7 @@ type ListAuthSessionsByUserIDRow struct {
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
@@ -251,6 +327,7 @@ func (q *Queries) ListAuthSessionsByUserID(ctx context.Context, userID uuid.UUID
 			&i.UserAgent,
 			&i.IpAddress,
 			&i.ExpiresAt,
+			&i.ConsumedAt,
 			&i.RevokedAt,
 			&i.RevocationReason,
 			&i.CreatedAt,
@@ -282,6 +359,7 @@ RETURNING
     user_agent,
     ip_address,
     expires_at,
+    consumed_at,
     revoked_at,
     revocation_reason,
     created_at,
@@ -301,6 +379,7 @@ type RevokeAuthSessionRow struct {
 	UserAgent        *string            `json:"user_agent"`
 	IpAddress        net.IP             `json:"ip_address"`
 	ExpiresAt        time.Time          `json:"expires_at"`
+	ConsumedAt       pgtype.Timestamptz `json:"consumed_at"`
 	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
 	RevocationReason *string            `json:"revocation_reason"`
 	CreatedAt        time.Time          `json:"created_at"`
@@ -318,6 +397,7 @@ func (q *Queries) RevokeAuthSession(ctx context.Context, arg RevokeAuthSessionPa
 		&i.UserAgent,
 		&i.IpAddress,
 		&i.ExpiresAt,
+		&i.ConsumedAt,
 		&i.RevokedAt,
 		&i.RevocationReason,
 		&i.CreatedAt,
@@ -344,73 +424,4 @@ type RevokeAuthSessionFamilyParams struct {
 func (q *Queries) RevokeAuthSessionFamily(ctx context.Context, arg RevokeAuthSessionFamilyParams) error {
 	_, err := q.db.Exec(ctx, revokeAuthSessionFamily, arg.RevocationReason, arg.FamilyID)
 	return err
-}
-
-const rotateAuthSession = `-- name: RotateAuthSession :one
-UPDATE auth_sessions
-SET
-    refresh_token_hash = $1,
-    expires_at = $2,
-    updated_at = NOW()
-WHERE id = $3
-  AND revoked_at IS NULL
-  AND expires_at > NOW()
-  AND refresh_token_hash = $4
-RETURNING
-    id,
-    user_id,
-    family_id,
-    refresh_token_hash,
-    user_agent,
-    ip_address,
-    expires_at,
-    revoked_at,
-    revocation_reason,
-    created_at,
-    updated_at
-`
-
-type RotateAuthSessionParams struct {
-	NewRefreshTokenHash     string    `json:"new_refresh_token_hash"`
-	ExpiresAt               time.Time `json:"expires_at"`
-	ID                      uuid.UUID `json:"id"`
-	CurrentRefreshTokenHash string    `json:"current_refresh_token_hash"`
-}
-
-type RotateAuthSessionRow struct {
-	ID               uuid.UUID          `json:"id"`
-	UserID           uuid.UUID          `json:"user_id"`
-	FamilyID         uuid.UUID          `json:"family_id"`
-	RefreshTokenHash string             `json:"refresh_token_hash"`
-	UserAgent        *string            `json:"user_agent"`
-	IpAddress        net.IP             `json:"ip_address"`
-	ExpiresAt        time.Time          `json:"expires_at"`
-	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
-	RevocationReason *string            `json:"revocation_reason"`
-	CreatedAt        time.Time          `json:"created_at"`
-	UpdatedAt        time.Time          `json:"updated_at"`
-}
-
-func (q *Queries) RotateAuthSession(ctx context.Context, arg RotateAuthSessionParams) (RotateAuthSessionRow, error) {
-	row := q.db.QueryRow(ctx, rotateAuthSession,
-		arg.NewRefreshTokenHash,
-		arg.ExpiresAt,
-		arg.ID,
-		arg.CurrentRefreshTokenHash,
-	)
-	var i RotateAuthSessionRow
-	err := row.Scan(
-		&i.ID,
-		&i.UserID,
-		&i.FamilyID,
-		&i.RefreshTokenHash,
-		&i.UserAgent,
-		&i.IpAddress,
-		&i.ExpiresAt,
-		&i.RevokedAt,
-		&i.RevocationReason,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
 }

@@ -641,6 +641,7 @@ func TestServiceRefresh_ConcurrentSameToken(t *testing.T) {
 
 	var successCount int
 	var reuseCount int
+	var successfulRefresh RefreshOutput
 
 	for range requestCount {
 		result := <-results
@@ -656,6 +657,8 @@ func TestServiceRefresh_ConcurrentSameToken(t *testing.T) {
 			if result.result.RefreshToken == "" {
 				t.Error("successful refresh returned empty refresh token")
 			}
+
+			successfulRefresh = result.result
 
 		case errors.Is(result.err, ErrRefreshTokenReuse):
 			reuseCount++
@@ -696,6 +699,49 @@ func TestServiceRefresh_ConcurrentSameToken(t *testing.T) {
 		t.Fatalf(
 			"session revocation reason = %q, want %q",
 			*session.RevocationReason,
+			revocationReasonReuse,
+		)
+	}
+
+	newSessionID, err := token.ParseRefreshSessionID(
+		successfulRefresh.RefreshToken,
+	)
+	if err != nil {
+		t.Fatalf("parse new refresh token session ID: %v", err)
+	}
+
+	if newSessionID == sessionID {
+		t.Fatalf(
+			"new session ID reused original session ID: got %s",
+			newSessionID,
+		)
+	}
+
+	newSession, err := sessionRepo.GetAuthSessionByID(ctx, newSessionID)
+	if err != nil {
+		t.Fatalf("get new auth session after concurrent refresh: %v", err)
+	}
+
+	if newSession.FamilyID != familyID {
+		t.Fatalf(
+			"new session family ID = %s, want %s",
+			newSession.FamilyID,
+			familyID,
+		)
+	}
+
+	if newSession.RevokedAt == nil {
+		t.Fatal("new session revoked_at = nil, want non-nil after family reuse")
+	}
+
+	if newSession.RevocationReason == nil {
+		t.Fatal("new session revocation reason = nil, want non-nil")
+	}
+
+	if *newSession.RevocationReason != revocationReasonReuse {
+		t.Fatalf(
+			"new session revocation reason = %q, want %q",
+			*newSession.RevocationReason,
 			revocationReasonReuse,
 		)
 	}
@@ -899,5 +945,238 @@ func TestServiceLogout_InvalidToken(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestServiceRefresh_CreatesNewSessionGeneration(t *testing.T) {
+	if os.Getenv("RUN_DB_TESTS") != "1" {
+		t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("DATABASE_URL is required")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	repo := repository.NewRepository(pool)
+	userRepo := repository.NewUserRepository(pool)
+	sessionRepo := repository.NewAuthSessionRepository(pool)
+
+	passwordHasher := password.NewHasher()
+
+	passwordHash, err := passwordHasher.Hash("correct-password")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	userID := uuid.New()
+	email := "auth-refresh-generation-" + userID.String() + "@example.com"
+
+	_, err = userRepo.CreateUser(ctx, repository.CreateUserInput{
+		ID:           userID,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Status:       domain.UserStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+
+	defer func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM users WHERE id = $1",
+			userID,
+		)
+		if err != nil {
+			t.Errorf("cleanup user: %v", err)
+		}
+	}()
+
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	service := NewService(
+		userRepo,
+		sessionRepo,
+		repo,
+		passwordHasher,
+		jwt,
+		slog.Default(),
+	)
+
+	// Generation 1.
+	sessionID1 := uuid.New()
+	familyID := uuid.New()
+
+	refreshToken1, refreshTokenHash1, err := jwt.CreateRefreshToken(sessionID1)
+	if err != nil {
+		t.Fatalf("create refresh token #1: %v", err)
+	}
+
+	_, err = sessionRepo.CreateAuthSession(
+		ctx,
+		repository.CreateAuthSessionInput{
+			ID:               sessionID1,
+			UserID:           userID,
+			FamilyID:         familyID,
+			RefreshTokenHash: refreshTokenHash1,
+			UserAgent:        "test-agent",
+			IPAddress:        net.ParseIP("127.0.0.1"),
+			ExpiresAt:        time.Now().UTC().Add(24 * time.Hour),
+		},
+	)
+	if err != nil {
+		t.Fatalf("create auth session #1: %v", err)
+	}
+
+	// Refresh generation 1 -> generation 2.
+	result, err := service.Refresh(ctx, RefreshInput{
+		RefreshToken: refreshToken1,
+	})
+	if err != nil {
+		t.Fatalf("refresh generation #1: %v", err)
+	}
+
+	if result.RefreshToken == "" {
+		t.Fatal("refresh generation #1 returned empty refresh token")
+	}
+
+	sessionID2, err := token.ParseRefreshSessionID(result.RefreshToken)
+	if err != nil {
+		t.Fatalf("parse refresh token #2: %v", err)
+	}
+
+	if sessionID2 == sessionID1 {
+		t.Fatalf(
+			"session ID was reused: got %s, want a new session ID",
+			sessionID2,
+		)
+	}
+
+	session1, err := sessionRepo.GetAuthSessionByID(ctx, sessionID1)
+	if err != nil {
+		t.Fatalf("get session #1: %v", err)
+	}
+
+	session2, err := sessionRepo.GetAuthSessionByID(ctx, sessionID2)
+	if err != nil {
+		t.Fatalf("get session #2: %v", err)
+	}
+
+	if session1.ConsumedAt == nil {
+		t.Fatal("session #1 was not consumed after rotation")
+	}
+
+	if session1.RevokedAt != nil {
+		t.Fatal("session #1 should not be revoked after normal rotation")
+	}
+
+	if session2.ConsumedAt != nil {
+		t.Fatal("session #2 should still be active")
+	}
+
+	if session2.FamilyID != familyID {
+		t.Fatalf(
+			"session #2 family ID = %s, want %s",
+			session2.FamilyID,
+			familyID,
+		)
+	}
+
+	if session2.FamilyID != session1.FamilyID {
+		t.Fatalf(
+			"session family changed across rotation: session #1 = %s, session #2 = %s",
+			session1.FamilyID,
+			session2.FamilyID,
+		)
+	}
+
+	if session2.ID == session1.ID {
+		t.Fatal("session #2 reused session #1 ID")
+	}
+
+	// Refresh generation 2 -> generation 3.
+	secondResult, err := service.Refresh(ctx, RefreshInput{
+		RefreshToken: result.RefreshToken,
+	})
+	if err != nil {
+		t.Fatalf("refresh generation #2: %v", err)
+	}
+
+	sessionID3, err := token.ParseRefreshSessionID(secondResult.RefreshToken)
+	if err != nil {
+		t.Fatalf("parse refresh token #3: %v", err)
+	}
+
+	if sessionID3 == sessionID2 {
+		t.Fatalf(
+			"session ID was reused on second rotation: got %s, want a new session ID",
+			sessionID3,
+		)
+	}
+
+	if sessionID3 == sessionID1 {
+		t.Fatalf(
+			"session ID was reused from generation #1: got %s",
+			sessionID3,
+		)
+	}
+
+	session3, err := sessionRepo.GetAuthSessionByID(ctx, sessionID3)
+	if err != nil {
+		t.Fatalf("get session #3: %v", err)
+	}
+
+	session2AfterRotation, err := sessionRepo.GetAuthSessionByID(
+		ctx,
+		sessionID2,
+	)
+	if err != nil {
+		t.Fatalf("get session #2 after second rotation: %v", err)
+	}
+
+	if session2AfterRotation.ConsumedAt == nil {
+		t.Fatal("session #2 was not consumed after second rotation")
+	}
+
+	if session3.ConsumedAt != nil {
+		t.Fatal("session #3 should still be active")
+	}
+
+	if session3.FamilyID != familyID {
+		t.Fatalf(
+			"session #3 family ID = %s, want %s",
+			session3.FamilyID,
+			familyID,
+		)
+	}
+
+	if session3.FamilyID != session2AfterRotation.FamilyID {
+		t.Fatalf(
+			"session family changed on second rotation: session #2 = %s, session #3 = %s",
+			session2AfterRotation.FamilyID,
+			session3.FamilyID,
+		)
 	}
 }

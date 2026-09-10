@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// We’ll hold off on this for now, as the deployment topology has not yet been finalized.
+
 func RealIP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := clientIP(r)

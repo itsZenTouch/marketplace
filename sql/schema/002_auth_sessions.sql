@@ -5,6 +5,7 @@ CREATE TABLE auth_sessions (
   user_agent TEXT,
   ip_address INET,
   expires_at TIMESTAMPTZ NOT NULL,
+  consumed_at TIMESTAMPTZ,
   revoked_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
