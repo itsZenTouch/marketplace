@@ -20,6 +20,11 @@ const (
 	keyLength   = 32
 )
 
+type PasswordHasher interface {
+	Hash(rawPassword string) (string, error)
+	Compare(rawPassword, encodedHash string) error
+}
+
 type Hasher struct{}
 
 func NewHasher() *Hasher {

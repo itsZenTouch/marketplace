@@ -2,11 +2,13 @@ package repository
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 
 	"github.com/itsZenTouch/marketplace/internal/domain"
 	"github.com/itsZenTouch/marketplace/internal/repository/db"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,6 +41,14 @@ func (r *userRepository) CreateUser(
 		Status:       string(input.Status),
 	})
 	if err != nil {
+		var pgErr *pgconn.PgError
+
+		if errors.As(err, &pgErr) {
+			if pgErr.Code == "23505" &&
+				pgErr.ConstraintName == "users_email_unique" {
+				return domain.User{}, domain.ErrUserEmailAlreadyExists
+			}
+		}
 		return domain.User{}, err
 	}
 

@@ -28,6 +28,7 @@ func newTestRouter(
 		r.Use(AuthMiddleware(jwt))
 
 		r.Get("/api/auth/me", handler.Me)
+		r.Get("/api/auth/sessions", handler.Sessions)
 	})
 
 	return router
@@ -81,6 +82,37 @@ func TestRouter_MeRequiresAuthentication(t *testing.T) {
 	req := httptest.NewRequest(
 		http.MethodGet,
 		"/api/auth/me",
+		nil,
+	)
+
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestRouter_SessionsRequiresAuthentication(t *testing.T) {
+	handler := NewHandler(nil)
+
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	router := newTestRouter(handler, jwt)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/api/auth/sessions",
 		nil,
 	)
 

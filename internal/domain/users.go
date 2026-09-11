@@ -1,18 +1,23 @@
 package domain
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
 )
 
-type UserStatus string
+type (
+	UserStatus string
+)
 
 const (
 	UserStatusActive    UserStatus = "active"
 	UserStatusSuspended UserStatus = "suspended"
 	UserStatusDisabled  UserStatus = "disabled"
 )
+
+var ErrUserEmailAlreadyExists = errors.New("user email already exists")
 
 type User struct {
 	ID                  uuid.UUID

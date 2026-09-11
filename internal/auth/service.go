@@ -24,6 +24,7 @@ var (
 	ErrAccountLocked       = errors.New("account temporarily locked")
 	ErrInvalidRefreshToken = errors.New("invalid refresh token")
 	ErrRefreshTokenReuse   = errors.New("refresh token reuse detected")
+	ErrEmailAlreadyExists  = errors.New("email already exists")
 )
 
 var (
@@ -35,7 +36,7 @@ type Service struct {
 	users    repository.UserRepository
 	sessions repository.AuthSessionRepository
 	uow      repository.UnitOfWorkManager
-	password *password.Hasher
+	password password.PasswordHasher
 	token    *token.JWT
 	logger   *slog.Logger
 }
@@ -56,6 +57,15 @@ func NewService(
 		token:    jwt,
 		logger:   logger,
 	}
+}
+
+type RegisterInput struct {
+	Email    string
+	Password string
+}
+
+type RegisterOutput struct {
+	User domain.User
 }
 
 type LoginInput struct {
@@ -92,7 +102,7 @@ func (s *Service) Login(
 	ctx context.Context,
 	input LoginInput,
 ) (LoginOutput, error) {
-	email := strings.ToLower(strings.TrimSpace(input.Email))
+	email := normalizeEmail(input.Email)
 
 	if email == "" || input.Password == "" {
 		return LoginOutput{}, ErrInvalidCredentials
@@ -580,4 +590,51 @@ func (s *Service) handleRefreshTokenReuse(
 	)
 
 	return ErrRefreshTokenReuse
+}
+
+func (s *Service) Register(
+	ctx context.Context,
+	input RegisterInput,
+) (RegisterOutput, error) {
+	email := normalizeEmail(input.Email)
+
+	if email == "" || input.Password == "" {
+		return RegisterOutput{}, ErrInvalidCredentials
+	}
+
+	passwordHash, err := s.password.Hash(input.Password)
+	if err != nil {
+		return RegisterOutput{}, err
+	}
+
+	user, err := s.users.CreateUser(
+		ctx,
+		repository.CreateUserInput{
+			ID:           uuid.New(),
+			Email:        email,
+			PasswordHash: passwordHash,
+			Status:       domain.UserStatusActive,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, domain.ErrUserEmailAlreadyExists) {
+			return RegisterOutput{}, ErrEmailAlreadyExists
+		}
+
+		s.logger.ErrorContext(
+			ctx,
+			"failed to create user",
+			slog.Any("error", err),
+		)
+
+		return RegisterOutput{}, err
+	}
+
+	return RegisterOutput{
+		User: user,
+	}, nil
+}
+
+func normalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
 }

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -8,18 +9,67 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
+	"github.com/itsZenTouch/marketplace/internal/domain"
 )
 
+type AuthService interface {
+	Register(
+		ctx context.Context,
+		input RegisterInput,
+	) (RegisterOutput, error)
+
+	Login(
+		ctx context.Context,
+		input LoginInput,
+	) (LoginOutput, error)
+
+	GetMe(
+		ctx context.Context,
+		userID uuid.UUID,
+	) (domain.User, error)
+
+	Refresh(
+		ctx context.Context,
+		input RefreshInput,
+	) (RefreshOutput, error)
+
+	Logout(
+		ctx context.Context,
+		input LogoutInput,
+	) error
+
+	ListSessions(
+		ctx context.Context,
+		userID uuid.UUID,
+	) ([]domain.AuthSession, error)
+}
+
+var _ AuthService = (*Service)(nil)
+
 type Handler struct {
-	service  *Service
+	service  AuthService
 	validate *validator.Validate
 }
 
-func NewHandler(service *Service) *Handler {
+func NewHandler(service AuthService) *Handler {
 	return &Handler{
 		service:  service,
 		validate: validator.New(),
 	}
+}
+
+type registerRequest struct {
+	Email    string `json:"email" validate:"required,email,max=255"`
+	Password string `json:"password" validate:"required,min=8,max=128"`
+}
+
+type registerResponse struct {
+	User struct {
+		ID     string `json:"id"`
+		Email  string `json:"email"`
+		Status string `json:"status"`
+	} `json:"user"`
 }
 
 type loginRequest struct {
@@ -67,6 +117,56 @@ type sessionResponse struct {
 
 type sessionsResponse struct {
 	Sessions []sessionResponse `json:"sessions"`
+}
+
+func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
+	var req registerRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request body",
+		})
+		return
+	}
+
+	if err := h.validate.Struct(req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "invalid request",
+		})
+		return
+	}
+
+	result, err := h.service.Register(
+		r.Context(),
+		RegisterInput{
+			Email:    req.Email,
+			Password: req.Password,
+		},
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrEmailAlreadyExists):
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": "email already registered",
+			})
+
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]string{
+				"error": "internal server error",
+			})
+		}
+
+		return
+	}
+
+	response := registerResponse{}
+	response.User.ID = result.User.ID.String()
+	response.User.Email = result.User.Email
+	response.User.Status = string(result.User.Status)
+
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {

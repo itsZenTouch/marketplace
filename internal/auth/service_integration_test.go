@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,26 @@ import (
 	"github.com/itsZenTouch/marketplace/internal/platform/token"
 	"github.com/itsZenTouch/marketplace/internal/repository"
 )
+
+type mockPasswordHasher struct {
+	hashFn func(password string) (string, error)
+
+	hashCalls int
+}
+
+func (m *mockPasswordHasher) Hash(password string) (string, error) {
+	m.hashCalls++
+
+	if m.hashFn != nil {
+		return m.hashFn(password)
+	}
+
+	return "hashed-password", nil
+}
+
+func (m *mockPasswordHasher) Compare(password, hash string) error {
+	return nil
+}
 
 func TestServiceLoginAccountLocking(t *testing.T) {
 	if os.Getenv("RUN_DB_TESTS") != "1" {
@@ -1178,5 +1199,571 @@ func TestServiceRefresh_CreatesNewSessionGeneration(t *testing.T) {
 			session2AfterRotation.FamilyID,
 			session3.FamilyID,
 		)
+	}
+}
+
+func TestService_Register(t *testing.T) {
+	t.Parallel()
+
+	errHashFailed := errors.New("hash failed")
+	errRepositoryFailed := errors.New("repository failed")
+
+	userID := uuid.New()
+
+	tests := []struct {
+		name string
+
+		input RegisterInput
+
+		hashResult string
+		hashErr    error
+
+		createUserResult domain.User
+		createUserErr    error
+
+		wantErr error
+
+		wantCreateUserCalls int
+
+		wantEmail  string
+		wantStatus domain.UserStatus
+	}{
+		{
+			name: "valid credentials",
+			input: RegisterInput{
+				Email:    "  USER@Example.COM  ",
+				Password: "password123",
+			},
+			hashResult: "hashed-password",
+			createUserResult: domain.User{
+				ID:     userID,
+				Email:  "user@example.com",
+				Status: domain.UserStatusActive,
+			},
+
+			wantCreateUserCalls: 1,
+			wantEmail:           "user@example.com",
+			wantStatus:          domain.UserStatusActive,
+		},
+		{
+			name: "empty email",
+			input: RegisterInput{
+				Email:    "",
+				Password: "password123",
+			},
+
+			wantErr:             ErrInvalidCredentials,
+			wantCreateUserCalls: 0,
+		},
+		{
+			name: "whitespace email",
+			input: RegisterInput{
+				Email:    "   ",
+				Password: "password123",
+			},
+
+			wantErr:             ErrInvalidCredentials,
+			wantCreateUserCalls: 0,
+		},
+		{
+			name: "empty password",
+			input: RegisterInput{
+				Email:    "user@example.com",
+				Password: "",
+			},
+
+			wantErr:             ErrInvalidCredentials,
+			wantCreateUserCalls: 0,
+		},
+		{
+			name: "hash failure",
+			input: RegisterInput{
+				Email:    "user@example.com",
+				Password: "password123",
+			},
+			hashErr: errHashFailed,
+
+			wantErr:             errHashFailed,
+			wantCreateUserCalls: 0,
+		},
+		{
+			name: "duplicate email",
+			input: RegisterInput{
+				Email:    "user@example.com",
+				Password: "password123",
+			},
+			createUserErr: domain.ErrUserEmailAlreadyExists,
+
+			wantErr:             ErrEmailAlreadyExists,
+			wantCreateUserCalls: 1,
+		},
+		{
+			name: "repository failure",
+			input: RegisterInput{
+				Email:    "user@example.com",
+				Password: "password123",
+			},
+			createUserErr: errRepositoryFailed,
+
+			wantErr:             errRepositoryFailed,
+			wantCreateUserCalls: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			repo := &mockUserRepository{
+				createUserFn: func(
+					ctx context.Context,
+					input repository.CreateUserInput,
+				) (domain.User, error) {
+					if tt.createUserErr != nil {
+						return domain.User{}, tt.createUserErr
+					}
+
+					result := tt.createUserResult
+					result.ID = input.ID
+
+					return result, nil
+				},
+			}
+
+			hasher := &mockPasswordHasher{
+				hashFn: func(rawPassword string) (string, error) {
+					return tt.hashResult, tt.hashErr
+				},
+			}
+
+			svc := &Service{
+				users:    repo,
+				password: hasher,
+				logger:   slog.Default(),
+			}
+
+			got, err := svc.Register(
+				context.Background(),
+				tt.input,
+			)
+
+			// Error assertion.
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error %v, got nil", tt.wantErr)
+				}
+
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf(
+						"expected error %v, got %v",
+						tt.wantErr,
+						err,
+					)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+			}
+
+			// Repository call count.
+			if repo.createUserCalls != tt.wantCreateUserCalls {
+				t.Fatalf(
+					"CreateUser calls = %d, want %d",
+					repo.createUserCalls,
+					tt.wantCreateUserCalls,
+				)
+			}
+
+			// Invalid input / hash failure must stop before repository.
+			if tt.wantCreateUserCalls == 0 {
+				if got != (RegisterOutput{}) {
+					t.Fatalf(
+						"expected empty output, got %+v",
+						got,
+					)
+				}
+
+				return
+			}
+
+			// Repository error must return empty output.
+			if tt.wantErr != nil {
+				if got != (RegisterOutput{}) {
+					t.Fatalf(
+						"expected empty output on error, got %+v",
+						got,
+					)
+				}
+
+				return
+			}
+
+			// Success assertions.
+			if got.User.ID == uuid.Nil {
+				t.Error("expected generated UUID, got uuid.Nil")
+			}
+
+			if repo.createUserInput.ID == uuid.Nil {
+				t.Error("expected generated UUID, got uuid.Nil")
+			}
+
+			if got.User.ID != repo.createUserInput.ID {
+				t.Errorf(
+					"returned user ID = %v, repository ID = %v",
+					got.User.ID,
+					repo.createUserInput.ID,
+				)
+			}
+
+			if repo.createUserInput.Email != tt.wantEmail {
+				t.Errorf(
+					"email = %q, want %q",
+					repo.createUserInput.Email,
+					tt.wantEmail,
+				)
+			}
+
+			if repo.createUserInput.PasswordHash != "hashed-password" {
+				t.Errorf(
+					"password hash = %q, want %q",
+					repo.createUserInput.PasswordHash,
+					"hashed-password",
+				)
+			}
+
+			if repo.createUserInput.PasswordHash == tt.input.Password {
+				t.Error("password must not be stored as plaintext")
+			}
+
+			if repo.createUserInput.Status != tt.wantStatus {
+				t.Errorf(
+					"status = %q, want %q",
+					repo.createUserInput.Status,
+					tt.wantStatus,
+				)
+			}
+
+			if got.User.Email != tt.wantEmail {
+				t.Errorf(
+					"returned email = %q, want %q",
+					got.User.Email,
+					tt.wantEmail,
+				)
+			}
+
+			if got.User.Status != tt.wantStatus {
+				t.Errorf(
+					"returned status = %q, want %q",
+					got.User.Status,
+					tt.wantStatus,
+				)
+			}
+
+			if hasher.hashCalls != 1 {
+				t.Errorf(
+					"Hash calls = %d, want 1",
+					hasher.hashCalls,
+				)
+			}
+		})
+	}
+}
+
+func TestService_Register_EmailNormalization(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	tests := []struct {
+		name          string
+		inputEmail    string
+		createUserErr error
+		wantEmail     string
+		wantErr       error
+	}{
+		{
+			name:       "trim and lowercase",
+			inputEmail: "  USER@Example.COM  ",
+			wantEmail:  "user@example.com",
+		},
+		{
+			name:          "duplicate email with different casing",
+			inputEmail:    "  USER@EXAMPLE.COM  ",
+			createUserErr: domain.ErrUserEmailAlreadyExists,
+			wantEmail:     "user@example.com",
+			wantErr:       ErrEmailAlreadyExists,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotInput repository.CreateUserInput
+			var createCalls int
+
+			repo := &mockUserRepository{
+				createUserFn: func(
+					ctx context.Context,
+					input repository.CreateUserInput,
+				) (domain.User, error) {
+					createCalls++
+					gotInput = input
+
+					if tt.createUserErr != nil {
+						return domain.User{}, tt.createUserErr
+					}
+
+					return domain.User{
+						ID:     userID,
+						Email:  input.Email,
+						Status: domain.UserStatusActive,
+					}, nil
+				},
+			}
+
+			svc := &Service{
+				users:    repo,
+				password: password.NewHasher(),
+				logger:   slog.Default(),
+			}
+
+			got, err := svc.Register(
+				context.Background(),
+				RegisterInput{
+					Email:    tt.inputEmail,
+					Password: "password123",
+				},
+			)
+
+			if tt.wantErr != nil {
+				if err == nil {
+					t.Fatalf("expected error %v, got nil", tt.wantErr)
+				}
+
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf(
+						"expected error %v, got %v",
+						tt.wantErr,
+						err,
+					)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected no error, got %v", err)
+				}
+
+				if got.User.Email != tt.wantEmail {
+					t.Errorf(
+						"returned email = %q, want %q",
+						got.User.Email,
+						tt.wantEmail,
+					)
+				}
+			}
+
+			if createCalls != 1 {
+				t.Fatalf(
+					"CreateUser calls = %d, want 1",
+					createCalls,
+				)
+			}
+
+			if gotInput.Email != tt.wantEmail {
+				t.Errorf(
+					"CreateUser email = %q, want %q",
+					gotInput.Email,
+					tt.wantEmail,
+				)
+			}
+		})
+	}
+}
+
+func TestService_Login_EmailNormalization(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+	hasher := password.NewHasher()
+
+	passwordHash, err := hasher.Hash("password123")
+	if err != nil {
+		t.Fatalf("failed to hash password: %v", err)
+	}
+
+	var gotEmail string
+
+	repo := &mockUserRepository{
+		getUserByEmailFn: func(
+			ctx context.Context,
+			email string,
+		) (domain.User, error) {
+			gotEmail = email
+
+			return domain.User{
+				ID:           userID,
+				Email:        "user@example.com",
+				PasswordHash: passwordHash,
+				Status:       domain.UserStatusActive,
+			}, nil
+		},
+	}
+
+	// Login akan masuk ke transaction setelah password benar.
+	// Karena test ini hanya ingin memverifikasi normalisasi email,
+	// transaction dibuat sebagai no-op.
+	uow := &mockUnitOfWorkManager{
+		withTxFn: func(
+			ctx context.Context,
+			fn func(repository.UnitOfWork) error,
+		) error {
+			return nil
+		},
+	}
+
+	svc := &Service{
+		users:    repo,
+		uow:      uow,
+		password: hasher,
+		logger:   slog.Default(),
+	}
+
+	_, err = svc.Login(
+		context.Background(),
+		LoginInput{
+			Email:    "  USER@Example.COM  ",
+			Password: "password123",
+		},
+	)
+	if err != nil {
+		t.Fatalf("expected login to succeed, got %v", err)
+	}
+
+	if gotEmail != "user@example.com" {
+		t.Errorf(
+			"GetUserByEmail email = %q, want %q",
+			gotEmail,
+			"user@example.com",
+		)
+	}
+}
+
+func TestService_Login_CaseInsensitiveEmail(t *testing.T) {
+	if os.Getenv("RUN_DB_TESTS") != "1" {
+		t.Skip("set RUN_DB_TESTS=1 to run database integration tests")
+	}
+
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Fatal("DATABASE_URL is required")
+	}
+
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		30*time.Second,
+	)
+	defer cancel()
+
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	defer pool.Close()
+
+	if err := pool.Ping(ctx); err != nil {
+		t.Fatalf("ping database: %v", err)
+	}
+
+	repo := repository.NewRepository(pool)
+	userRepo := repository.NewUserRepository(pool)
+	sessionRepo := repository.NewAuthSessionRepository(pool)
+
+	passwordHasher := password.NewHasher()
+
+	passwordHash, err := passwordHasher.Hash("correct-password")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	userID := uuid.New()
+	email := "auth-case-" + userID.String() + "@example.com"
+
+	_, err = userRepo.CreateUser(ctx, repository.CreateUserInput{
+		ID:           userID,
+		Email:        email,
+		PasswordHash: passwordHash,
+		Status:       domain.UserStatusActive,
+	})
+	if err != nil {
+		t.Fatalf("create test user: %v", err)
+	}
+
+	defer func() {
+		_, err := pool.Exec(
+			context.Background(),
+			"DELETE FROM users WHERE id = $1",
+			userID,
+		)
+		if err != nil {
+			t.Errorf("cleanup user: %v", err)
+		}
+	}()
+
+	jwt := token.NewJWT(
+		"test-secret",
+		"marketplace-test",
+		15*time.Minute,
+		24*time.Hour,
+	)
+
+	service := NewService(
+		userRepo,
+		sessionRepo,
+		repo,
+		passwordHasher,
+		jwt,
+		slog.Default(),
+	)
+
+	// Login menggunakan casing berbeda + whitespace.
+	loginEmail := "  AUTH-CASE-" + strings.ToUpper(userID.String()) + "@EXAMPLE.COM  "
+
+	result, err := service.Login(
+		ctx,
+		LoginInput{
+			Email:    loginEmail,
+			Password: "correct-password",
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"login with different email casing failed: %v",
+			err,
+		)
+	}
+
+	if result.User.ID != userID {
+		t.Fatalf(
+			"logged-in user ID = %v, want %v",
+			result.User.ID,
+			userID,
+		)
+	}
+
+	if result.User.Email != email {
+		t.Fatalf(
+			"logged-in user email = %q, want %q",
+			result.User.Email,
+			email,
+		)
+	}
+
+	if result.AccessToken == "" {
+		t.Fatal("access token is empty")
+	}
+
+	if result.RefreshToken == "" {
+		t.Fatal("refresh token is empty")
 	}
 }

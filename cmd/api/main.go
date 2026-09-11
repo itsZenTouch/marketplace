@@ -97,9 +97,10 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	router.Post("/api/auth/logout", authHandler.Logout)
-	router.Post("/api/auth/refresh", authHandler.Refresh)
+	router.Post("/api/auth/register", authHandler.Register)
 	router.Post("/api/auth/login", authHandler.Login)
+	router.Post("/api/auth/refresh", authHandler.Refresh)
+	router.Post("/api/auth/logout", authHandler.Logout)
 
 	router.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(jwtService))
