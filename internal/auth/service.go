@@ -277,11 +277,25 @@ func (s *Service) GetMe(
 	ctx context.Context,
 	userID uuid.UUID,
 ) (domain.User, error) {
-	s.logger.InfoContext(ctx,
-		"get user status succeeded",
-		slog.String("user_id", userID.String()))
+	user, err := s.users.GetUserByID(ctx, userID)
+	if err != nil {
+		s.logger.ErrorContext(
+			ctx,
+			"failed to get user",
+			slog.String("user_id", userID.String()),
+			slog.Any("error", err),
+		)
 
-	return s.users.GetUserByID(ctx, userID)
+		return domain.User{}, err
+	}
+
+	s.logger.InfoContext(
+		ctx,
+		"get user succeeded",
+		slog.String("user_id", userID.String()),
+	)
+
+	return user, nil
 }
 
 func (s *Service) Refresh(

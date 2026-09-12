@@ -17,7 +17,10 @@ const (
 	UserStatusDisabled  UserStatus = "disabled"
 )
 
-var ErrUserEmailAlreadyExists = errors.New("user email already exists")
+var (
+	ErrUserNotFound           = errors.New("user not found")
+	ErrUserEmailAlreadyExists = errors.New("user email already exists")
+)
 
 type User struct {
 	ID                  uuid.UUID

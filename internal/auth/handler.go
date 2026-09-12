@@ -259,6 +259,13 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 
 	user, err := h.service.GetMe(r.Context(), principal.UserID)
 	if err != nil {
+		if errors.Is(err, domain.ErrUserNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{
+				"error": "user not found",
+			})
+			return
+		}
+
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "internal server error",
 		})

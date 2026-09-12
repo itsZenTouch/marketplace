@@ -8,6 +8,7 @@ import (
 
 	"github.com/itsZenTouch/marketplace/internal/domain"
 	"github.com/itsZenTouch/marketplace/internal/repository/db"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -63,6 +64,9 @@ func (r *userRepository) GetUserByID(
 
 	user, err := queries.GetUserByID(ctx, id)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return domain.User{}, domain.ErrUserNotFound
+		}
 		return domain.User{}, err
 	}
 
