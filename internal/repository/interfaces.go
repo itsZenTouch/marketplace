@@ -30,6 +30,7 @@ type CreateAuthSessionInput struct {
 type UnitOfWork interface {
 	Users() UserRepository
 	AuthSessions() AuthSessionRepository
+	Authorization() AuthorizationRepository
 }
 
 type UnitOfWorkManager interface {
@@ -105,4 +106,16 @@ type AuthSessionRepository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 	) ([]domain.AuthSession, error)
+}
+
+type AuthorizationRepository interface {
+	ListUserRoles(
+		ctx context.Context,
+		userID uuid.UUID,
+	) ([]domain.Role, error)
+
+	ListUserPermissions(
+		ctx context.Context,
+		userID uuid.UUID,
+	) ([]domain.Permission, error)
 }

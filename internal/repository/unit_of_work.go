@@ -19,3 +19,7 @@ func (r *txUnitOfWork) Users() UserRepository {
 func (r *txUnitOfWork) AuthSessions() AuthSessionRepository {
 	return newAuthSessionRepository(r.tx)
 }
+
+func (r *txUnitOfWork) Authorization() AuthorizationRepository {
+	return newAuthorizationRepository(r.tx)
+}

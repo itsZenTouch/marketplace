@@ -27,6 +27,26 @@ type AuthSession struct {
 	RevocationReason *string            `json:"revocation_reason"`
 }
 
+type Permission struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type Role struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type RolePermission struct {
+	RoleID       uuid.UUID `json:"role_id"`
+	PermissionID uuid.UUID `json:"permission_id"`
+	CreatedAt    time.Time `json:"created_at"`
+}
+
 type User struct {
 	ID                  uuid.UUID          `json:"id"`
 	Email               string             `json:"email"`
@@ -37,4 +57,10 @@ type User struct {
 	LockedUntil         pgtype.Timestamptz `json:"locked_until"`
 	CreatedAt           time.Time          `json:"created_at"`
 	UpdatedAt           time.Time          `json:"updated_at"`
+}
+
+type UserRole struct {
+	UserID    uuid.UUID `json:"user_id"`
+	RoleID    uuid.UUID `json:"role_id"`
+	CreatedAt time.Time `json:"created_at"`
 }

@@ -113,6 +113,24 @@ func consumeAuthSessionToDomain(
 	}
 }
 
+func listUserRoleToDomain(
+	authz db.ListUserRolesRow,
+) domain.Role {
+	return domain.Role{
+		ID:   authz.ID,
+		Name: authz.Name,
+	}
+}
+
+func listUserPermissions(
+	authz db.ListUserPermissionsRow,
+) domain.Permission {
+	return domain.Permission{
+		ID:   authz.ID,
+		Name: authz.Name,
+	}
+}
+
 func stringPtr(value string) *string {
 	if value == "" {
 		return nil

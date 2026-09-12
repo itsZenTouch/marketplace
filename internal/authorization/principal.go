@@ -9,7 +9,9 @@ import (
 type contextKey struct{}
 
 type Principal struct {
-	UserID uuid.UUID
+	UserID      uuid.UUID
+	Roles       []string
+	Permissions []string
 }
 
 func NewPrincipal(userID uuid.UUID) Principal {
@@ -33,4 +35,24 @@ func PrincipalFromContext(ctx context.Context) (Principal, bool) {
 	}
 
 	return principal, true
+}
+
+func (p Principal) HasRole(role string) bool {
+	for _, r := range p.Roles {
+		if r == role {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (p Principal) HasPermission(permission string) bool {
+	for _, p := range p.Permissions {
+		if p == permission {
+			return true
+		}
+	}
+
+	return false
 }
