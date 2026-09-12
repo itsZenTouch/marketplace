@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/google/uuid"
+	"github.com/itsZenTouch/marketplace/internal/authorization"
 	"github.com/itsZenTouch/marketplace/internal/domain"
 )
 
@@ -248,7 +249,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
-	userID, ok := UserIDFromContext(r.Context())
+	principal, ok := authorization.PrincipalFromContext(r.Context())
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{
 			"error": "unauthorized",
@@ -256,16 +257,10 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.service.GetMe(r.Context(), userID)
+	user, err := h.service.GetMe(r.Context(), principal.UserID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{
 			"error": "internal server error",
-		})
-		return
-	}
-	if user.ID != userID {
-		writeJSON(w, http.StatusNotFound, map[string]string{
-			"error": "user not found",
 		})
 		return
 	}
@@ -382,7 +377,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Sessions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := UserIDFromContext(r.Context())
+	principal, ok := authorization.PrincipalFromContext(r.Context())
 	if !ok {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{
 			"error": "unauthorized",
@@ -392,7 +387,7 @@ func (h *Handler) Sessions(w http.ResponseWriter, r *http.Request) {
 
 	sessions, err := h.service.ListSessions(
 		r.Context(),
-		userID,
+		principal.UserID,
 	)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{

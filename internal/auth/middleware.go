@@ -1,22 +1,12 @@
 package auth
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
+	"github.com/itsZenTouch/marketplace/internal/authorization"
 	"github.com/itsZenTouch/marketplace/internal/platform/token"
 )
-
-type contextKey string
-
-const userIDContextKey contextKey = "user_id"
-
-func UserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	userID, ok := ctx.Value(userIDContextKey).(uuid.UUID)
-	return userID, ok
-}
 
 func AuthMiddleware(tokenJWT *token.JWT) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -46,10 +36,12 @@ func AuthMiddleware(tokenJWT *token.JWT) func(http.Handler) http.Handler {
 				})
 				return
 			}
-			ctx := context.WithValue(
+
+			principal := authorization.NewPrincipal(userID)
+
+			ctx := authorization.WithPrincipal(
 				r.Context(),
-				userIDContextKey,
-				userID,
+				principal,
 			)
 
 			next.ServeHTTP(w, r.WithContext(ctx))

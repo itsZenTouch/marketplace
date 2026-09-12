@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/itsZenTouch/marketplace/internal/authorization"
 	"github.com/itsZenTouch/marketplace/internal/platform/token"
 )
 
@@ -106,6 +107,8 @@ func TestAuthMiddleware_InvalidAuthorizationHeader(t *testing.T) {
 }
 
 func TestAuthMiddleware_ValidAccessToken(t *testing.T) {
+	t.Parallel()
+
 	jwt := testJWT()
 	userID := uuid.New()
 
@@ -120,15 +123,15 @@ func TestAuthMiddleware_ValidAccessToken(t *testing.T) {
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called = true
 
-			gotUserID, ok := UserIDFromContext(r.Context())
+			principal, ok := authorization.PrincipalFromContext(r.Context())
 			if !ok {
-				t.Fatal("user ID missing from context")
+				t.Fatal("principal missing from context")
 			}
 
-			if gotUserID != userID {
+			if principal.UserID != userID {
 				t.Fatalf(
 					"user ID = %v, want %v",
-					gotUserID,
+					principal.UserID,
 					userID,
 				)
 			}
@@ -137,8 +140,16 @@ func TestAuthMiddleware_ValidAccessToken(t *testing.T) {
 		}),
 	)
 
-	req := httptest.NewRequest(http.MethodGet, "/protected", nil)
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	)
+
+	req.Header.Set(
+		"Authorization",
+		"Bearer "+accessToken,
+	)
 
 	rec := httptest.NewRecorder()
 
@@ -174,15 +185,15 @@ func TestAuthMiddleware_ValidToken(t *testing.T) {
 
 	handler := AuthMiddleware(jwt)(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			userID, ok := UserIDFromContext(r.Context())
+			principal, ok := authorization.PrincipalFromContext(r.Context())
 			if !ok {
-				t.Fatal("user ID missing from context")
+				t.Fatal("principal missing from context")
 			}
 
-			if userID != expectedUserID {
+			if principal.UserID != expectedUserID {
 				t.Fatalf(
 					"user ID = %v, want %v",
-					userID,
+					principal.UserID,
 					expectedUserID,
 				)
 			}
@@ -254,6 +265,60 @@ func TestAuthMiddleware_ExpiredToken(t *testing.T) {
 			"status = %d, want %d",
 			rec.Code,
 			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestAuthMiddlewareSetsPrincipal(t *testing.T) {
+	t.Parallel()
+
+	jwt := testJWT()
+	userID := uuid.New()
+
+	accessToken, err := jwt.CreateAccessToken(userID)
+	if err != nil {
+		t.Fatalf("create access token: %v", err)
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := authorization.PrincipalFromContext(r.Context())
+		if !ok {
+			t.Fatal("expected principal in context")
+		}
+
+		if principal.UserID != userID {
+			t.Fatalf(
+				"expected user ID %s, got %s",
+				userID,
+				principal.UserID,
+			)
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	handler := AuthMiddleware(jwt)(next)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	)
+
+	req.Header.Set(
+		"Authorization",
+		"Bearer "+accessToken,
+	)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusNoContent,
 		)
 	}
 }
