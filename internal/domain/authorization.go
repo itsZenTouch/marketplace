@@ -20,6 +20,7 @@ type RolePermission struct {
 }
 
 type UserAuthorization struct {
+	Status      UserStatus
 	Roles       []string
 	Permissions []string
 }

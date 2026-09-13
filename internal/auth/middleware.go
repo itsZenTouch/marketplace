@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -65,12 +66,28 @@ func AuthorizationHydration(
 				principal.UserID,
 			)
 			if err != nil {
-				// Untuk sementara kita pertahankan error sebagai 500.
-				// Pada commit berikutnya kita akan membedakan
-				// user-not-found dari database/internal error.
-				writeJSON(w, http.StatusInternalServerError, map[string]string{
-					"error": "failed to load authorization",
-				})
+				switch {
+				case errors.Is(err, authorization.ErrUserNotFound):
+					writeJSON(w, http.StatusUnauthorized, map[string]string{
+						"error": "unauthorized",
+					})
+
+				case errors.Is(err, authorization.ErrUserSuspended):
+					writeJSON(w, http.StatusForbidden, map[string]string{
+						"error": "account suspended",
+					})
+
+				case errors.Is(err, authorization.ErrUserDisabled):
+					writeJSON(w, http.StatusForbidden, map[string]string{
+						"error": "account disabled",
+					})
+
+				default:
+					writeJSON(w, http.StatusInternalServerError, map[string]string{
+						"error": "failed to load authorization",
+					})
+				}
+
 				return
 			}
 

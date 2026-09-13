@@ -53,6 +53,7 @@ func (q *Queries) AssignRoleToUser(ctx context.Context, arg AssignRoleToUserPara
 
 const getUserAuthorization = `-- name: GetUserAuthorization :one
 SELECT
+    u.status,
     COALESCE(
         (
             SELECT array_agg(DISTINCT r.name)
@@ -77,6 +78,7 @@ WHERE u.id = $1
 `
 
 type GetUserAuthorizationRow struct {
+	Status      string   `json:"status"`
 	Roles       []string `json:"roles"`
 	Permissions []string `json:"permissions"`
 }
@@ -84,7 +86,7 @@ type GetUserAuthorizationRow struct {
 func (q *Queries) GetUserAuthorization(ctx context.Context, id uuid.UUID) (GetUserAuthorizationRow, error) {
 	row := q.db.QueryRow(ctx, getUserAuthorization, id)
 	var i GetUserAuthorizationRow
-	err := row.Scan(&i.Roles, &i.Permissions)
+	err := row.Scan(&i.Status, &i.Roles, &i.Permissions)
 	return i, err
 }
 

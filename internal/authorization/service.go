@@ -2,14 +2,12 @@ package authorization
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
+	"github.com/itsZenTouch/marketplace/internal/domain"
+	"github.com/jackc/pgx/v5"
 )
-
-type UserAuthorization struct {
-	Roles       []string
-	Permissions []string
-}
 
 type Service struct {
 	repository AuthorizationRepository
@@ -27,12 +25,31 @@ func (s *Service) LoadPrincipal(
 ) (Principal, error) {
 	authz, err := s.repository.GetUserAuthorization(ctx, userID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Principal{}, ErrUserNotFound
+		}
+
 		return Principal{}, err
 	}
 
-	principal := NewPrincipal(userID)
-	principal.Roles = append([]string(nil), authz.Roles...)
-	principal.Permissions = append([]string(nil), authz.Permissions...)
+	switch authz.Status {
+	case domain.UserStatusSuspended:
+		return Principal{}, ErrUserSuspended
 
-	return principal, nil
+	case domain.UserStatusDisabled:
+		return Principal{}, ErrUserDisabled
+
+	case domain.UserStatusActive:
+		// Continue loading principal.
+
+	default:
+		return Principal{}, ErrInvalidUserStatus
+	}
+
+	principal := NewPrincipal(userID)
+
+	return principal.WithAuthorization(
+		authz.Roles,
+		authz.Permissions,
+	), nil
 }

@@ -56,6 +56,7 @@ WHERE role_id = $1
 
 -- name: GetUserAuthorization :one
 SELECT
+    u.status,
     COALESCE(
         (
             SELECT array_agg(DISTINCT r.name)

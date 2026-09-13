@@ -476,3 +476,120 @@ func TestAuthorizationHydration_MissingPrincipal(t *testing.T) {
 		)
 	}
 }
+
+func TestAuthorizationHydration_UserNotFound(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	loader := fakePrincipalLoader{
+		err: authorization.ErrUserNotFound,
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := AuthorizationHydration(loader)(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		authorization.NewPrincipal(userID),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestAuthorizationHydration_UserSuspended(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	loader := fakePrincipalLoader{
+		err: authorization.ErrUserSuspended,
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := AuthorizationHydration(loader)(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		authorization.NewPrincipal(userID),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusForbidden,
+		)
+	}
+}
+
+func TestAuthorizationHydration_UserDisabled(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	loader := fakePrincipalLoader{
+		err: authorization.ErrUserDisabled,
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := AuthorizationHydration(loader)(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		authorization.NewPrincipal(userID),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusForbidden,
+		)
+	}
+}

@@ -77,6 +77,7 @@ func (r *authorizationRepository) GetUserAuthorization(
 	}
 
 	return domain.UserAuthorization{
+		Status:      domain.UserStatus(result.Status),
 		Roles:       result.Roles,
 		Permissions: result.Permissions,
 	}, nil
