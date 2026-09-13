@@ -26,6 +26,11 @@ type mockUnitOfWorkManager struct {
 		ctx context.Context,
 		fn func(repository.UnitOfWork) error,
 	) error
+
+	withoutTxFn func(
+		ctx context.Context,
+		fn func(repository.UnitOfWork) error,
+	) error
 }
 
 func (m *mockUnitOfWorkManager) WithTx(
@@ -34,6 +39,17 @@ func (m *mockUnitOfWorkManager) WithTx(
 ) error {
 	if m.withTxFn != nil {
 		return m.withTxFn(ctx, fn)
+	}
+
+	return nil
+}
+
+func (m *mockUnitOfWorkManager) WithoutTx(
+	ctx context.Context,
+	fn func(repository.UnitOfWork) error,
+) error {
+	if m.withoutTxFn != nil {
+		return m.withoutTxFn(ctx, fn)
 	}
 
 	return nil

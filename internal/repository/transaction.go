@@ -27,3 +27,12 @@ func (r *Repository) WithTx(
 
 	return nil
 }
+
+func (r *Repository) WithoutTx(
+	ctx context.Context,
+	fn func(UnitOfWork) error,
+) error {
+	uow := newPoolUnitOfWork(r.pool)
+
+	return fn(uow)
+}

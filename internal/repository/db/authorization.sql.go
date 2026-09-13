@@ -51,6 +51,43 @@ func (q *Queries) AssignRoleToUser(ctx context.Context, arg AssignRoleToUserPara
 	return err
 }
 
+const getUserAuthorization = `-- name: GetUserAuthorization :one
+SELECT
+    COALESCE(
+        (
+            SELECT array_agg(DISTINCT r.name)
+            FROM roles r
+            INNER JOIN user_roles ur ON ur.role_id = r.id
+            WHERE ur.user_id = u.id
+        ),
+        ARRAY[]::text[]
+    )::text[] AS roles,
+    COALESCE(
+        (
+            SELECT array_agg(DISTINCT p.name)
+            FROM permissions p
+            INNER JOIN role_permissions rp ON rp.permission_id = p.id
+            INNER JOIN user_roles ur ON ur.role_id = rp.role_id
+            WHERE ur.user_id = u.id
+        ),
+        ARRAY[]::text[]
+    )::text[] AS permissions
+FROM users u
+WHERE u.id = $1
+`
+
+type GetUserAuthorizationRow struct {
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions"`
+}
+
+func (q *Queries) GetUserAuthorization(ctx context.Context, id uuid.UUID) (GetUserAuthorizationRow, error) {
+	row := q.db.QueryRow(ctx, getUserAuthorization, id)
+	var i GetUserAuthorizationRow
+	err := row.Scan(&i.Roles, &i.Permissions)
+	return i, err
+}
+
 const listUserPermissions = `-- name: ListUserPermissions :many
 SELECT DISTINCT
     p.id,

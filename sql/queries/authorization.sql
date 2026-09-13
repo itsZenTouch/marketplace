@@ -52,3 +52,28 @@ DO NOTHING;
 DELETE FROM role_permissions
 WHERE role_id = $1
   AND permission_id = $2;
+
+
+-- name: GetUserAuthorization :one
+SELECT
+    COALESCE(
+        (
+            SELECT array_agg(DISTINCT r.name)
+            FROM roles r
+            INNER JOIN user_roles ur ON ur.role_id = r.id
+            WHERE ur.user_id = u.id
+        ),
+        ARRAY[]::text[]
+    )::text[] AS roles,
+    COALESCE(
+        (
+            SELECT array_agg(DISTINCT p.name)
+            FROM permissions p
+            INNER JOIN role_permissions rp ON rp.permission_id = p.id
+            INNER JOIN user_roles ur ON ur.role_id = rp.role_id
+            WHERE ur.user_id = u.id
+        ),
+        ARRAY[]::text[]
+    )::text[] AS permissions
+FROM users u
+WHERE u.id = $1;

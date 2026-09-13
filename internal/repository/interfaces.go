@@ -38,6 +38,11 @@ type UnitOfWorkManager interface {
 		ctx context.Context,
 		fn func(UnitOfWork) error,
 	) error
+
+	WithoutTx(
+		ctx context.Context,
+		fn func(UnitOfWork) error,
+	) error
 }
 
 type UserRepository interface {
@@ -118,4 +123,9 @@ type AuthorizationRepository interface {
 		ctx context.Context,
 		userID uuid.UUID,
 	) ([]domain.Permission, error)
+
+	GetUserAuthorization(
+		ctx context.Context,
+		userID uuid.UUID,
+	) (UserAuthorization, error)
 }
