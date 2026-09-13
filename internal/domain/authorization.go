@@ -18,3 +18,8 @@ type RolePermission struct {
 	RoleID       uuid.UUID `json:"role_id"`
 	PermissionID uuid.UUID `json:"permission_id"`
 }
+
+type UserAuthorization struct {
+	Roles       []string
+	Permissions []string
+}

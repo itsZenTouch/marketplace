@@ -11,7 +11,7 @@ type AuthorizationRepository interface {
 	GetUserAuthorization(
 		ctx context.Context,
 		userID uuid.UUID,
-	) (UserAuthorization, error)
+	) (domain.UserAuthorization, error)
 }
 
 type PrincipalLoader interface {

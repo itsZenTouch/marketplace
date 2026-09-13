@@ -6,19 +6,20 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/itsZenTouch/marketplace/internal/authorization"
+	"github.com/itsZenTouch/marketplace/internal/domain"
 )
 
 type mockAuthorizationRepository struct {
-	authz authorization.UserAuthorization
+	authz domain.UserAuthorization
 	err   error
 }
 
 func (m *mockAuthorizationRepository) GetUserAuthorization(
 	ctx context.Context,
 	userID uuid.UUID,
-) (authorization.UserAuthorization, error) {
+) (domain.UserAuthorization, error) {
 	if m.err != nil {
-		return authorization.UserAuthorization{}, m.err
+		return domain.UserAuthorization{}, m.err
 	}
 
 	return m.authz, nil
@@ -30,7 +31,7 @@ func TestService_LoadPrincipal(t *testing.T) {
 	userID := uuid.New()
 
 	repo := &mockAuthorizationRepository{
-		authz: authorization.UserAuthorization{
+		authz: domain.UserAuthorization{
 			Roles: []string{
 				"admin",
 			},

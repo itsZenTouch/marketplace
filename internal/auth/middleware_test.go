@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -319,6 +321,158 @@ func TestAuthMiddlewareSetsPrincipal(t *testing.T) {
 			"status = %d, want %d",
 			rec.Code,
 			http.StatusNoContent,
+		)
+	}
+}
+
+type fakePrincipalLoader struct {
+	principal authorization.Principal
+	err       error
+}
+
+func (f fakePrincipalLoader) LoadPrincipal(
+	ctx context.Context,
+	userID uuid.UUID,
+) (authorization.Principal, error) {
+	return f.principal, f.err
+}
+
+func TestAuthorizationHydration_LoadsPrincipal(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	loader := fakePrincipalLoader{
+		principal: authorization.NewPrincipal(userID).WithAuthorization(
+			[]string{"seller"},
+			[]string{
+				"product:create",
+				"product:update",
+			},
+		),
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := authorization.PrincipalFromContext(r.Context())
+		if !ok {
+			t.Fatal("principal missing")
+		}
+
+		if principal.UserID != userID {
+			t.Fatalf(
+				"user ID = %s, want %s",
+				principal.UserID,
+				userID,
+			)
+		}
+
+		if !principal.HasRole("seller") {
+			t.Fatal("expected seller role")
+		}
+
+		if !principal.HasPermission("product:create") {
+			t.Fatal("expected product:create permission")
+		}
+
+		if !principal.HasPermission("product:update") {
+			t.Fatal("expected product:update permission")
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	handler := AuthorizationHydration(loader)(next)
+
+	// Simulasikan principal yang sudah dibuat oleh AuthMiddleware.
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		authorization.NewPrincipal(userID),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusNoContent,
+		)
+	}
+}
+
+func TestAuthorizationHydration_LoaderError(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	loader := fakePrincipalLoader{
+		err: errors.New("database unavailable"),
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := AuthorizationHydration(loader)(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		authorization.NewPrincipal(userID),
+	)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusInternalServerError,
+		)
+	}
+}
+
+func TestAuthorizationHydration_MissingPrincipal(t *testing.T) {
+	t.Parallel()
+
+	loader := fakePrincipalLoader{}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := AuthorizationHydration(loader)(next)
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		"/protected",
+		nil,
+	)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
 		)
 	}
 }

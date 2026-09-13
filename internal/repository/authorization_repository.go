@@ -25,11 +25,6 @@ func newAuthorizationRepository(db DBTX) *authorizationRepository {
 	}
 }
 
-type UserAuthorization struct {
-	Roles       []string
-	Permissions []string
-}
-
 func (a *authorizationRepository) ListUserRoles(
 	ctx context.Context,
 	userID uuid.UUID,
@@ -73,15 +68,15 @@ func (a *authorizationRepository) ListUserPermissions(
 func (r *authorizationRepository) GetUserAuthorization(
 	ctx context.Context,
 	userID uuid.UUID,
-) (UserAuthorization, error) {
+) (domain.UserAuthorization, error) {
 	queries := db.New(r.db)
 
 	result, err := queries.GetUserAuthorization(ctx, userID)
 	if err != nil {
-		return UserAuthorization{}, err
+		return domain.UserAuthorization{}, err
 	}
 
-	return UserAuthorization{
+	return domain.UserAuthorization{
 		Roles:       result.Roles,
 		Permissions: result.Permissions,
 	}, nil

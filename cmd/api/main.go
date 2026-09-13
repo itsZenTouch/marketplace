@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/itsZenTouch/marketplace/internal/auth"
+	"github.com/itsZenTouch/marketplace/internal/authorization"
 	"github.com/itsZenTouch/marketplace/internal/config"
 	appmiddleware "github.com/itsZenTouch/marketplace/internal/middleware"
 	"github.com/itsZenTouch/marketplace/internal/platform/database"
@@ -62,6 +63,11 @@ func main() {
 
 	userRepository := repository.NewUserRepository(dbPool)
 	sessionRepository := repository.NewAuthSessionRepository(dbPool)
+	authorizationRepository := repository.NewAuthorizationRepository(dbPool)
+
+	authorizationService := authorization.NewService(
+		authorizationRepository,
+	)
 
 	passwordHasher := password.NewHasher()
 
@@ -104,6 +110,7 @@ func main() {
 
 	router.Group(func(r chi.Router) {
 		r.Use(auth.AuthMiddleware(jwtService))
+		r.Use(auth.AuthorizationHydration(authorizationService))
 
 		r.Get("/api/auth/me", authHandler.Me)
 		r.Get("/api/auth/sessions", authHandler.Sessions)
