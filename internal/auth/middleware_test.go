@@ -593,3 +593,153 @@ func TestAuthorizationHydration_UserDisabled(t *testing.T) {
 		)
 	}
 }
+
+func TestRequirePermission_AllowsPermission(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	principal := authorization.NewPrincipal(userID).WithAuthorization(
+		[]string{"seller"},
+		[]string{"product:create"},
+	)
+
+	nextCalled := false
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	handler := RequirePermission("product:create")(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		principal,
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/products",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusNoContent,
+		)
+	}
+
+	if !nextCalled {
+		t.Fatal("next handler was not called")
+	}
+}
+
+func TestRequirePermission_Forbidden(t *testing.T) {
+	t.Parallel()
+
+	userID := uuid.New()
+
+	principal := authorization.NewPrincipal(userID).WithAuthorization(
+		[]string{"buyer"},
+		[]string{"product:read"},
+	)
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := RequirePermission("product:create")(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		principal,
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/products",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusForbidden,
+		)
+	}
+}
+
+func TestRequirePermission_MissingPrincipal(t *testing.T) {
+	t.Parallel()
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := RequirePermission("product:create")(next)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/products",
+		nil,
+	)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestRequirePermission_InvalidPrincipal(t *testing.T) {
+	t.Parallel()
+
+	principal := authorization.Principal{}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("next handler should not be called")
+	})
+
+	handler := RequirePermission("product:create")(next)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		principal,
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/products",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
+		)
+	}
+}
