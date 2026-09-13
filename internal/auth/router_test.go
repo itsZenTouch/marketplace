@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 
+	"github.com/itsZenTouch/marketplace/internal/authorization"
 	"github.com/itsZenTouch/marketplace/internal/platform/token"
 )
 
@@ -125,6 +128,122 @@ func TestRouter_SessionsRequiresAuthentication(t *testing.T) {
 			"status = %d, want %d",
 			rec.Code,
 			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestRouter_ProtectedRouteRequiresPermission(t *testing.T) {
+	t.Parallel()
+
+	router := chi.NewRouter()
+
+	router.Group(func(r chi.Router) {
+		r.Use(RequirePermission("product:create"))
+
+		r.Post("/api/products", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	})
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/products",
+		nil,
+	)
+
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusUnauthorized,
+		)
+	}
+}
+
+func TestRouter_ProtectedRouteAllowsPermission(t *testing.T) {
+	t.Parallel()
+
+	router := chi.NewRouter()
+
+	router.Group(func(r chi.Router) {
+		r.Use(RequirePermission("product:create"))
+
+		r.Post("/api/products", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	})
+
+	principal := authorization.NewPrincipal(uuid.New()).WithAuthorization(
+		[]string{"seller"},
+		[]string{"product:create"},
+	)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		principal,
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/products",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusNoContent,
+		)
+	}
+}
+
+func TestRouter_ProtectedRouteForbiddenWithoutPermission(t *testing.T) {
+	t.Parallel()
+
+	router := chi.NewRouter()
+
+	router.Group(func(r chi.Router) {
+		r.Use(RequirePermission("product:create"))
+
+		r.Post("/api/products", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		})
+	})
+
+	principal := authorization.NewPrincipal(uuid.New()).WithAuthorization(
+		[]string{"buyer"},
+		[]string{"product:read"},
+	)
+
+	ctx := authorization.WithPrincipal(
+		context.Background(),
+		principal,
+	)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/products",
+		nil,
+	).WithContext(ctx)
+
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf(
+			"status = %d, want %d",
+			rec.Code,
+			http.StatusForbidden,
 		)
 	}
 }
