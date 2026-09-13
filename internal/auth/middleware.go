@@ -130,3 +130,33 @@ func RequirePermission(permission string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+func RequireRole(role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			principal, ok := authorization.PrincipalFromContext(r.Context())
+			if !ok {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "unauthenticated",
+				})
+				return
+			}
+
+			if !principal.IsValid() {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{
+					"error": "unauthenticated",
+				})
+				return
+			}
+
+			if !principal.HasRole(role) {
+				writeJSON(w, http.StatusForbidden, map[string]string{
+					"error": "forbidden",
+				})
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
